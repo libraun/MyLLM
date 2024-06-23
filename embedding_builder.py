@@ -29,7 +29,7 @@ class EmbeddingBuilder:
     
         tokens = self.tokenizer(document)
 
-        result = [vocab[word] for word in tokens]
+        result = [self.en_vocab[word] for word in tokens]
         result = torch.tensor(result, dtype=torch.long)
 
         result = self.embedding(result)

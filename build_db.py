@@ -160,11 +160,15 @@ if __name__ == "__main__":
         titles = [d[0] for d in processed_docs]
         documents = [d[1] for d in processed_docs]
 
-        for i in range(len(titles)):
+        i = 0
+        while i < len(titles):
             title = titles[i]
-            if titles.count(title) > 1:
+            if titles.count(title) != 1:
                 titles.pop(i)
                 documents.pop(i)
+
+            else:
+                i = i + 1
 
         assert len(titles) == len(documents)
 

@@ -23,7 +23,7 @@ class EmbeddingBuilder:
 
         self.embedding = nn.Embedding(len(self.en_vocab), 
                                       embedding_dim,
-                                      padding_idx=self.en_vocab["<pad_idx>"])
+                                      padding_idx=self.en_vocab["<pad>"])
     
     def get_embeddings(self, document: str) -> None:
     

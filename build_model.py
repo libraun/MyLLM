@@ -4,16 +4,20 @@ import os
 import time
 
 import torch
-import torch.nn
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
+
+from torchtext.data.utils import get_tokenizer
 
 from collections import Counter
 
 import chromadb
 
 from model import Encoder, Decoder, Model
+
+from embedding_builder import EmbeddingBuilder
 
 from constants import DEFAULT_DB_PATH, DEFAULT_DB_NAME, \
                       EXIT_FAILURE, EXIT_SUCCESS, \
@@ -59,32 +63,21 @@ if __name__ == "__main__":
     except: 
         print("ERROR: Collection couldn't be found!")
         exit(EXIT_FAILURE)
-    
-    print("Time to retrieve collection: ", time.time() - db_retrieve_start)
 
-    query_start_time = time.time()
-    sample_query = collection.query(
-        query_texts=["Who was the president of America in 1940? "],
-        n_results=2,
-        include=["documents"]
-    )
+    entries = collection.get()
     
-    print("Time to query collection: ", time.time() - query_start_time)
+    documents = entries["documents"]
+    embeddings = entries["embeddings"]
 
-    
-
+    emb_builder = EmbeddingBuilder(EMBED_DIM, documents)
+'''
     documents = collection.get(include=["documents"])
-    documents = " ".join([doc for doc in documents["documents"]])
+    documents = [doc for doc in documents["documents"]]
+    
+    
 
-    train_set = DataLoader(documents,
-                           batch_size=128,
-                           collate_fn=collate)
-
-    en_vocab = Counter(documents)
-
-    pad_idx = en_vocab["<pad>"]
-    bos_idx = en_vocab["<bos>"]
-    eos_idx = en_vocab["<eos>"]
+    embedding_retriever = EmbeddingRetriever(documents)
+    en_vocab = embedding_retriever.get_vocab()
 
     d_model = len(en_vocab)
 
@@ -96,8 +89,14 @@ if __name__ == "__main__":
                       embedding_dim=EMBED_DIM, 
                       hidden_dim=HIDDEN_DIM,
                       n_layers=2,
-                      padding_idx=pad_idx)
+                      padding_idx=en_vocab["<pad>"])
     
     model = Model(encoder, decoder)
 
+
+    train_iter = DataLoader(train_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
+    valid_iter = DataLoader(valid_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
+    test_iter = DataLoader(test_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
+
     exit(EXIT_SUCCESS)
+'''

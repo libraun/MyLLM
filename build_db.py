@@ -7,67 +7,14 @@ import threading
 import chromadb
 import wikipedia
 
-from functools import cache
 from typing import List
 from wikipedia.exceptions import DisambiguationError, PageError
 
 from constants import *
 
+import wikipedia_utils
+
 CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
-
-# Match anything after a "Reference" (or "External Links") header
-ENDTEXT_EXPR = re.compile("==+ +?[References|External Links][\\S\\s]*")
-
-# Match common JavaScript and header plaintext tags
-WIKITAG_EXPR = re.compile("==+[^=]*?==+|\\n|\\r|{[^}]*?}")
-
-# Match more than one space
-EXTRASPACE_EXPR = re.compile("  +")
-
-#@cache
-def preprocess(text: str, 
-               repl: str=" ") -> str:
-
-    # Convert text to lowercase
-    text = text.lower()
-
-    # Remove wikipedia-specific tags/unnecessary text
-    text = re.sub(ENDTEXT_EXPR, repl, text)
-    text = re.sub(WIKITAG_EXPR, repl, text)
-
-    text = text.replace(r"\\",  "")
-
-    # Remove all extra spaces and non-unicode characters
-    text = re.sub(EXTRASPACE_EXPR, repl, text)
-
-    return text
-
-def load_strings_from_text(path: str, sep="\n") -> None | List[str]:
-
-    if not os.path.exists(path):
-        return None
-
-    with open(path, "r") as f:
-        text = f.read()
-
-    lines = text.split(sep=sep)
-    lines = [line for line in lines if len(line) > 1]
-    return lines
-
-
-def query_wikipedia_topics(topics: List[str]) -> List[str]:
-    
-    result = list()
-    count = 0
-    for topic in topics:
-        
-        search_results = wikipedia.search(topic, results=200)
-
-        result += search_results
-        count = count + 1
-
-    return result
-
 
 def get_data(page_title_list: List[str]) -> None:
 
@@ -91,7 +38,6 @@ def get_data(page_title_list: List[str]) -> None:
         processed_docs.append(item)
         count = count + 1     
 
-
 def run_threads(num_threads: int,
                 num_pages: int, 
                 queries: List[str]) -> None:
@@ -99,12 +45,11 @@ def run_threads(num_threads: int,
     thread_list: List[threading.Thread] = list()
     for _ in range(num_threads):
 
-        query_set = random.sample(queries, 
-                                  k=num_pages)
+        query_subset = random.sample(queries, k=num_pages)
         # Set a thread to run "get_data", supplying random_page_titles as arg
         thread = threading.Thread(
             target=get_data,
-            args=[query_set]
+            args=[query_subset]
         )
         thread_list.append(thread)
 
@@ -137,12 +82,14 @@ if __name__ == "__main__":
     collection = client.get_or_create_collection(db_name)
 
     # Load list of topics to query on wikipedia
-    topic_list = load_strings_from_text("topic_list.txt")
+    topic_list = wikipedia_utils.load_topics_from_text("topic_list.txt")
 
-    topic_search_results = query_wikipedia_topics(topic_list)
+    topic_search_results = wikipedia_utils.query_wikipedia_topics(topic_list)
+    topic_search_results = [topic for topic in topic_search_results \
+                            if "disambiguation" not in topic.lower()]
+    topic_search_results = wikipedia_utils.filter_topics(collection, topic_search_results)
+
     random.shuffle(topic_search_results)
-    
-    print(topic_search_results)
 
     # Retrieve wikipedia pages in rounds
     for _ in range(ROUNDS):
@@ -160,19 +107,11 @@ if __name__ == "__main__":
         titles = [d[0] for d in processed_docs]
         documents = [d[1] for d in processed_docs]
 
-        i = 0
-        while i < len(titles):
-            title = titles[i]
-            if titles.count(title) != 1:
-                titles.pop(i)
-                documents.pop(i)
-
-            else:
-                i = i + 1
+        titles, documents = wikipedia_utils.filter_invalid_pages(titles, documents)
 
         assert len(titles) == len(documents)
 
-        documents = [preprocess(doc) for doc in documents]
+        documents = [wikipedia_utils.preprocess_text(doc) for doc in documents]
 
         collection.add(documents=documents, ids=titles)
         

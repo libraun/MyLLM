@@ -4,10 +4,15 @@ import re
 
 import chromadb
 
-from constants import DEFAULT_DB_NAME,DEFAULT_DB_PATH, \
-                      EXIT_FAILURE, EXIT_SUCCESS
+from typing import List
 
-import chatbot_utils
+from constants import DEFAULT_DB_NAME,DEFAULT_DB_PATH, \
+                      EXIT_FAILURE, EXIT_SUCCESS, EMBED_DIM
+
+from embedding_builder import EmbeddingBuilder
+
+import wikipedia_utils
+
 
 CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
 
@@ -35,6 +40,10 @@ def delete_bad_documents(collection,
         while idx < num_docs and idx < batch_end_idx:
             
             current_doc = collection_docs[idx]
+            if len(current_doc) < 5:
+                delete_ids_batch.append(collection_ids[idx])
+                continue
+
             non_unicode_chars = re.findall(CHAR_SUB_EXPR,current_doc)
             
             if len(non_unicode_chars) > max_non_unicode_chars:
@@ -72,7 +81,7 @@ def preprocess_docs(collection, batch_size: int = 500) -> int:
         while idx < batch_end_idx and idx < num_docs:
             
             current_doc = collection_docs[idx]
-            current_doc = chatbot_utils.preprocess(current_doc)
+            current_doc = wikipedia_utils.preprocess_text(current_doc)
 
             update_ids_batch.append(collection_ids[idx])
             update_docs_batch.append(current_doc)
@@ -86,7 +95,43 @@ def preprocess_docs(collection, batch_size: int = 500) -> int:
                               documents=update_docs_batch)
             print("Cleaned", len(update_docs_batch),"documents.")
 
+def update_embeddings(collection, emb_builder, batch_size: int = 500) -> int:
 
+    entries = collection.get()
+
+    collection_docs = entries["documents"]
+    collection_ids = entries["ids"]
+
+    num_docs = len(collection_ids)
+
+    idx = 0 # Index into collection's documents
+    # Split docs into batches of size "batch_size" and update 
+    # collection using each preprocessed batch of documents 
+    while idx < num_docs:
+
+        update_ids_batch = list() 
+        update_docs_batch = list()
+        update_embeddings_batch = list()
+
+        batch_end_idx = idx + batch_size # Index to end this batch on (if smaller than num_docs)
+        while idx < batch_end_idx and idx < num_docs:
+            
+            current_doc = collection_docs[idx]
+            update_ids_batch.append(collection_ids[idx])
+
+            current_embeddings = emb_builder.get_embeddings(current_doc)
+            update_embeddings_batch.append(current_embeddings)
+            update_docs_batch.append(current_doc)
+
+            idx = idx + 1
+
+        # If this batch is not empty, use it to update collection.
+        if update_ids_batch and update_embeddings_batch:
+
+            collection.update(ids=update_ids_batch, 
+                              docs=update_docs_batch,
+                              embeddings=update_embeddings_batch)
+            print("Cleaned", len(update_embeddings_batch),"documents.")
 
 # Main
 if __name__ == "__main__":
@@ -108,10 +153,9 @@ if __name__ == "__main__":
         print("ERROR: Collection couldn't be found!")
         exit(EXIT_FAILURE)
 
-    delete_bad_documents(collection=collection)
+    documents = collection.get()["documents"]
 
-    collection = client.get_collection(db_name)
-
-    preprocess_docs(collection=collection)
+    emb_builder = EmbeddingBuilder(EMBED_DIM, documents)
+    update_embeddings(collection, )
     
     exit(EXIT_SUCCESS)

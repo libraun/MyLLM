@@ -155,7 +155,7 @@ if __name__ == "__main__":
 
     documents = collection.get()["documents"]
 
-    emb_builder = EmbeddingBuilder(EMBED_DIM, documents)
-    update_embeddings(collection, )
+    embedding_builder = EmbeddingBuilder(EMBED_DIM, documents)
+    update_embeddings(collection, embedding_builder)
     
     exit(EXIT_SUCCESS)

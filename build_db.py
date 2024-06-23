@@ -1,5 +1,7 @@
 import sys
+import os.path
 import re
+import random
 import threading
 
 import chromadb
@@ -22,8 +24,9 @@ WIKITAG_EXPR = re.compile("==+[^=]*?==+|\\n|\\r|{[^}]*?}")
 # Match more than one space
 EXTRASPACE_EXPR = re.compile("  +")
 
-@cache
-def preprocess(text: str, repl: str=" ") -> str:
+#@cache
+def preprocess(text: str, 
+               repl: str=" ") -> str:
 
     # Convert text to lowercase
     text = text.lower()
@@ -32,54 +35,82 @@ def preprocess(text: str, repl: str=" ") -> str:
     text = re.sub(ENDTEXT_EXPR, repl, text)
     text = re.sub(WIKITAG_EXPR, repl, text)
 
+    text = text.replace(r"\\",  "")
+
     # Remove all extra spaces and non-unicode characters
     text = re.sub(EXTRASPACE_EXPR, repl, text)
 
     return text
 
-def get_data(page_title_list: List[str]):
+def load_strings_from_text(path: str, sep="\n") -> None | List[str]:
+
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r") as f:
+        text = f.read()
+
+    lines = text.split(sep=sep)
+    lines = [line for line in lines if len(line) > 1]
+    return lines
+
+
+def query_wikipedia_topics(topics: List[str]) -> List[str]:
+    
+    result = list()
+    count = 0
+    for topic in topics:
+        
+        search_results = wikipedia.search(topic, results=200)
+
+        result += search_results
+        count = count + 1
+
+    return result
+
+
+def get_data(page_title_list: List[str]) -> None:
 
     global processed_docs
     
     count = 0
     while count < BATCH_LEN and page_title_list:
         page_title = page_title_list.pop()
-        
         # Attempt to obtain the wiki page referenced by "title"
         try:
             wiki_page = wikipedia.summary(page_title)      
-        
         # On page exception, ignore this page and keep going.
         except (DisambiguationError, PageError) as _:
             continue
-        
-        if re.search(CHAR_SUB_EXPR, wiki_page):
-            continue
-        
-        summary = preprocess(wiki_page)
 
-        item = (page_title, summary)
+        if len(wiki_page) < 5:
+            continue
+
+        item = (page_title, wiki_page)
 
         processed_docs.append(item)
         count = count + 1     
 
 
 def run_threads(num_threads: int,
-                num_pages: int):
+                num_pages: int, 
+                queries: List[str]) -> None:
 
     thread_list: List[threading.Thread] = list()
     for _ in range(num_threads):
 
-        # Generate random page titles for this threadess
-        random_page_titles = wikipedia.random(num_pages)
+        query_set = random.sample(queries, 
+                                  k=num_pages)
         # Set a thread to run "get_data", supplying random_page_titles as arg
         thread = threading.Thread(
             target=get_data,
-            args=[random_page_titles]
+            args=[query_set]
         )
-        thread.start()
         thread_list.append(thread)
-        
+
+    for thread in thread_list:
+        thread.start()
+
     for thread in thread_list:
         thread.join() 
 
@@ -105,6 +136,14 @@ if __name__ == "__main__":
     client = chromadb.PersistentClient(path=db_path)
     collection = client.get_or_create_collection(db_name)
 
+    # Load list of topics to query on wikipedia
+    topic_list = load_strings_from_text("topic_list.txt")
+
+    topic_search_results = query_wikipedia_topics(topic_list)
+    random.shuffle(topic_search_results)
+    
+    print(topic_search_results)
+
     # Retrieve wikipedia pages in rounds
     for _ in range(ROUNDS):
 
@@ -113,11 +152,23 @@ if __name__ == "__main__":
 
         processed_docs = list()
         # Adds wiki page info to global "processed_docs"
-        run_threads(num_threads, num_pages)
+        run_threads(num_threads=num_threads, 
+                    num_pages=num_pages, 
+                    queries=topic_search_results)
 
         # Pull unique titles and docs from processed documents
-        titles = list(set([d[0] for d in processed_docs]))
+        titles = [d[0] for d in processed_docs]
         documents = [d[1] for d in processed_docs]
+
+        for i in range(len(titles)):
+            title = titles[i]
+            if titles.count(title) > 1:
+                titles.pop(i)
+                documents.pop(i)
+
+        assert len(titles) == len(documents)
+
+        documents = [preprocess(doc) for doc in documents]
 
         collection.add(documents=documents, ids=titles)
         

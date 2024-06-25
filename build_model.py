@@ -1,102 +1,73 @@
-import sys
-import os
-
-import time
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
 
-from torchtext.data.utils import get_tokenizer
+from constants import *
 
-from collections import Counter
+def evaluate(iter, model):
+    model.eval()
+    epoch_loss = 0
+    with torch.no_grad():
+        for src, trg in iter:
+          #  src,trg = src.to(device), trg.to(device)
+            output = model(src, trg)
+            output_dim = output.shape[-1]
+            output = output[1:].view(-1, output_dim)
+            trg = trg[1:].view(-1)
+            loss = criterion(output, trg)
+            epoch_loss += loss.item()
+    return epoch_loss / len(iter)
 
-import chromadb
+UPDATE_MSG = "Epoch {n}: Train loss={t_loss:.2f} | Eval loss = {e_loss:.2f}"
+def train(train_iter, 
+          num_epochs: int, 
+          model,
+          log_msg=True):
+    
+    train_loss_values = []
+    validation_loss_values = []
+    for i in range(num_epochs):
+        epoch_loss = 0
+        model.train() # Set training to true
+        for src, trg in train_iter:
+            #src, trg = src.to(device), trg.to(device)
+            print(src.shape, " ", trg.shape)
+            optimizer.zero_grad()
+            output = model(src, trg)
+            output_dim = output.shape[-1]
+            output = output[1:].view(-1, output_dim)
+            trg = trg[1:].view(-1)
+            loss = criterion(output, trg)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+            optimizer.step()
+            epoch_loss += loss.item()
+        # Add mean loss value as epoch loss.
+        epoch_loss = epoch_loss / len(train_iter)
+        val_loss = evaluate(valid_iter, model)
 
-from model import Encoder, Decoder, Model
+        train_loss_values.append(epoch_loss)
+        validation_loss_values.append(val_loss)
 
-from embedding_builder import EmbeddingBuilder
-
-from constants import DEFAULT_DB_PATH, DEFAULT_DB_NAME, \
-                      EXIT_FAILURE, EXIT_SUCCESS, \
-                      EMBED_DIM, HIDDEN_DIM
-
-def collate(data_batch):
-
-    global bos_idx, eos_idx, pad_idx
-    in_batch,out_batch = [],[]
-    for (in_item, out_item) in data_batch:
-        in_batch.append(
-          torch.cat([
-            torch.tensor([bos_idx],dtype=torch.long),
-            in_item,
-            torch.tensor([eos_idx],dtype=torch.long)],dim=0)
-        )
-        out_batch.append(torch.cat([
-          torch.tensor([bos_idx],dtype=torch.long),
-          out_item,
-          torch.tensor([eos_idx],dtype=torch.long)],dim=0)
-        )
-    in_batch = pad_sequence(in_batch, padding_value=pad_idx)
-    out_batch = pad_sequence(out_batch, padding_value=pad_idx)
-
-    return in_batch,out_batch
+        if log_msg: # Output epoch progress if log_msg is enabled.
+            print(UPDATE_MSG.format(n = i + 1,
+                                    t_loss = epoch_loss,
+                                    e_loss = val_loss))
+    return train_loss_values, validation_loss_values
 
 if __name__ == "__main__":
 
-    db_name = DEFAULT_DB_NAME if len(sys.argv) < 2   \
-        else sys.argv[1] 
-    db_path = DEFAULT_DB_PATH if len(sys.argv) < 3   \
-        else sys.argv[2] 
-    
-    if not os.path.isdir(db_path):
-        print("ERROR: DB folder could not be found!")
-        exit(EXIT_FAILURE)
+    train_iter = None
+    valid_iter = None
 
-    db_retrieve_start = time.time()
-    client = chromadb.PersistentClient(path=db_path)
+    torch.load(train_iter, "./model_tensors/train_tensor.pt")
+    torch.load(valid_iter, "./model_tensors/valid_tensor.pt")
     
-    try:
-        collection = client.get_collection(db_name)
-    except: 
-        print("ERROR: Collection couldn't be found!")
-        exit(EXIT_FAILURE)
+    transformer_model = nn.Transformer()
 
-    entries = collection.get()
-    
-    documents = entries["documents"]
-    embeddings = entries["embeddings"]
+    optimizer = optim.Adam(transformer_model.parameters())
+    criterion = nn.CrossEntropyLoss(ignore_index=1)
 
-    emb_builder = EmbeddingBuilder(EMBED_DIM, documents)
-'''
-    documents = collection.get(include=["documents"])
-    documents = [doc for doc in documents["documents"]]
-    
     
 
-    embedding_retriever = EmbeddingRetriever(documents)
-    en_vocab = embedding_retriever.get_vocab()
-
-    d_model = len(en_vocab)
-
-    encoder = Encoder(d_model,
-                      embedding_dim=EMBED_DIM,
-                      hidden_dim=HIDDEN_DIM, 
-                      padding_idx=en_vocab["<pad>"])
-    decoder = Decoder(d_model,
-                      embedding_dim=EMBED_DIM, 
-                      hidden_dim=HIDDEN_DIM,
-                      n_layers=2,
-                      padding_idx=en_vocab["<pad>"])
-    
-    model = Model(encoder, decoder)
-
-
-    train_iter = DataLoader(train_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
-    valid_iter = DataLoader(valid_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
-    test_iter = DataLoader(test_data, batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate)
-
-    exit(EXIT_SUCCESS)
-'''
+    train(train_iter, 10, transformer_model, True)

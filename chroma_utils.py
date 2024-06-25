@@ -1,20 +1,8 @@
-import sys
-import os
 import re
 
 import chromadb
 
-from typing import List
-
-from constants import DEFAULT_DB_NAME,DEFAULT_DB_PATH, \
-                      EXIT_FAILURE, EXIT_SUCCESS, EMBED_DIM
-
-from embedding_builder import EmbeddingBuilder
-
 import wikipedia_utils
-
-
-CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
 
 def delete_bad_documents(collection, 
                          batch_size: int = 5000, 
@@ -60,7 +48,7 @@ def delete_bad_documents(collection,
     return total_docs_deleted
     
 
-def preprocess_docs(collection, batch_size: int = 500) -> int:
+def preprocess_documents(collection, batch_size: int = 500) -> int:
 
     entries = collection.get(include=["documents"])
 
@@ -119,45 +107,15 @@ def update_embeddings(collection, emb_builder, batch_size: int = 500) -> int:
             current_doc = collection_docs[idx]
             update_ids_batch.append(collection_ids[idx])
 
-            current_embeddings = emb_builder.get_embeddings(current_doc)
-            current_embeddings = current_embeddings.tolist()[0]
-            
-            update_embeddings_batch.append(current_embeddings)
+           # current_embeddings = emb_builder.get_embeddings(current_doc)
+
+           # update_embeddings_batch.append(current_embeddings)
             update_docs_batch.append(current_doc)
 
             idx = idx + 1
 
         # If this batch is not empty, use it to update collection.
-        if update_ids_batch and update_embeddings_batch:
+        if update_ids_batch:
 
             collection.update(ids=update_ids_batch, 
-                              documents=update_docs_batch,
-                              embeddings=update_embeddings_batch)
-            print("Cleaned", len(update_embeddings_batch),"documents.")
-
-# Main
-if __name__ == "__main__":
-
-    db_name = DEFAULT_DB_NAME if len(sys.argv) < 2   \
-        else sys.argv[1] 
-    db_path = DEFAULT_DB_PATH if len(sys.argv) < 3   \
-        else sys.argv[2] 
-    
-    if not os.path.isdir(db_path):
-        print("ERROR: DB folder could not be found!")
-        exit(EXIT_FAILURE)
-
-    client = chromadb.PersistentClient(path=db_path)
-    
-    try:
-        collection = client.get_collection(db_name)
-    except: 
-        print("ERROR: Collection couldn't be found!")
-        exit(EXIT_FAILURE)
-
-    documents = collection.get()["documents"]
-
-    embedding_builder = EmbeddingBuilder(EMBED_DIM, documents)
-    update_embeddings(collection, embedding_builder)
-    
-    exit(EXIT_SUCCESS)
+                              documents=update_docs_batch)

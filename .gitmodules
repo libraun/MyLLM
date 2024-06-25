@@ -1,0 +1,3 @@
+[submodule "Topical-Chat"]
+	path = Topical-Chat
+	url = https://github.com/alexa/Topical-Chat

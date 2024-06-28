@@ -1,3 +1,6 @@
 [submodule "Topical-Chat"]
 	path = Topical-Chat
 	url = https://github.com/alexa/Topical-Chat
+[submodule "text-sentiment-classifier"]
+	path = text-sentiment-classifier
+	url = https://github.com/libraun/text-sentiment-classifier.git

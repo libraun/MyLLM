@@ -1,13 +1,6 @@
-# MyLLM
-Baby's First LLM.
-
-## Introducing the World's Greatest Homebrewed LLM!
+# Introducing the World's Greatest Homebrewed LLM!
 
 It sometimes works!
-
-## Why was this created?
-
-I couldn't get an OpenAI key, so I made this out of spite. Just get an OpenAI key instead (if you can).
 
 
 ## Legal Stuff

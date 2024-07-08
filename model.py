@@ -6,9 +6,9 @@ class Encoder(nn.Module):
     def __init__(self, 
                  d_model: int, 
                  embedding_dim: int, 
-                 hidden_dim: int, 
-                 padding_idx: int,
-                 n_layers: int):
+                 hidden_dim: int,
+                 n_layers: int, 
+                 padding_idx: int):
         
         super(Encoder, self).__init__()
 
@@ -64,7 +64,7 @@ class Decoder(nn.Module):
         input = self.embeddings(input.unsqueeze(0))
         input = self.dropout(input)
 
-        output, (hidden, cell) = self.input_layer(input)
+        output, (hidden, cell) = self.rnn(input)
 
         prediction = self.fc_out(output.squeeze(0))
         return prediction, hidden, cell
@@ -81,7 +81,6 @@ class Model(nn.Module):
         self.trg_vocab_size = self.decoder.output_dim
 
     def forward(self, src, trg):
-        
         trg_len, batch_size = trg.shape
 
         outputs = torch.zeros(trg_len, batch_size, self.trg_vocab_size)

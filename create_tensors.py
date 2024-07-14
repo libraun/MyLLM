@@ -4,8 +4,6 @@ import os
 
 import math
 
-import pickle
-
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -24,6 +22,7 @@ import wikipedia_utils
 from text_tensor_builder import TextTensorBuilder
 
 from constants import *
+
 
 def load_data(use_langchain_query: bool=False,
               path: str="./Topical-Chat/conversations/train.json"):
@@ -61,21 +60,14 @@ def load_data(use_langchain_query: bool=False,
 def collate(data_batch):
 
     global bos_idx, eos_idx, pad_idx
-    global tensor_builder
     in_batch,out_batch = [],[]
     for (in_item, out_item) in data_batch:
-        in_batch.append(
-            torch.cat([
-                torch.tensor([bos_idx],dtype=torch.long),
-                in_item,
-                torch.tensor([eos_idx],dtype=torch.long)], dim=0
-            )       
-        )
+        in_batch.append(in_item)
         out_batch.append(
             torch.cat([
                 torch.tensor([bos_idx],dtype=torch.long),
                 out_item,
-                torch.tensor([eos_idx],dtype=torch.long)], dim=0
+                torch.tensor([eos_idx],dtype=torch.long)], dim=-1
             )
         )
     in_batch = pad_sequence(in_batch, padding_value=pad_idx)
@@ -134,21 +126,34 @@ if __name__ == "__main__":
     stopwords = load_stopwords("stopwords.txt")
 
     query_data = list()
+
+    agent1_msgs,agent2_msgs = [], []
     for convo in input_output_data:
         for agent in convo:
             for msg in agent:
                 query_data.append(msg[0])
-    
-    input_documents = db_documents + query_data
-                
-    tensor_builder = TextTensorBuilder(input_documents, init_save_path="vocab.pickle", stopwords=stopwords)
 
-    tokenizer = tensor_builder.tokenizer
-    en_vocab = tensor_builder.lang_vocab
+                if msg[1] == "agent_1":
+                    agent1_msgs.append(msg[0])
+                else:
+                    agent2_msgs.append(msg[0])
 
-    bos_idx = en_vocab["<BOS_IDX>"]
-    eos_idx = en_vocab["<EOS_IDX>"]
-    pad_idx = en_vocab["<PAD_IDX>"]
+    agent1_special_tokens = [
+        "<UNK_IDX>", "<PAD_IDX>",
+        "<BOS_IDX>", "<EOS_IDX>", 
+        "<BEGIN_MD_IDX>", "<END_MD_IDX>"
+    ]
+
+    agent1_vocab = TextTensorBuilder.build_vocab(agent1_msgs, specials=agent1_special_tokens)
+    agent2_vocab = TextTensorBuilder.build_vocab(agent2_msgs)
+
+    TextTensorBuilder.save_vocab(agent1_vocab, "agent1_vocab.pickle")
+    TextTensorBuilder.save_vocab(agent2_vocab, "agent2_vocab.pickle")
+
+
+    bos_idx = agent1_vocab["<BOS_IDX>"]
+    eos_idx = agent1_vocab["<EOS_IDX>"]
+    pad_idx = agent1_vocab["<PAD_IDX>"]
 
     tensor_data = list()
     count = 0
@@ -158,34 +163,41 @@ if __name__ == "__main__":
             break
 
         min_agent_data_length = len(min(agent1_data, agent2_data, key=len))
-
         for i in range(min_agent_data_length):
             
             input_msg = agent1_data[i][0]
             output_msg = agent2_data[i][0]
 
-            docs = db_instance.similarity_search(input_msg)
-            doc = docs[0].page_content
+            doc = db_instance.similarity_search(input_msg)[0].page_content
 
             doc = wikipedia_utils.preprocess_text(doc)
 
-            input_msg_ids = [w for w in tokenizer(input_msg) if w not in stopwords]
-            doc_ids = [w for w in tokenizer(doc) if w not in stopwords]
+            agent1_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
+                agent1_vocab, input_msg )
+            doc_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
+                agent1_vocab, doc )
 
-            input_doc = input_msg_ids + ["<BEGIN_MD>"] + doc_ids + ["<END_MD>"]
-
-            print(input_doc)
-
-            agent1_msg_tensor = tensor_builder.convert_text_to_tensor(
-                input_msg, tokenize=False)
-            agent2_msg_tensor = tensor_builder.convert_text_to_tensor(
-                output_msg )
+            agent2_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
+                agent2_vocab, output_msg )
             
-            full_doc = (agent1_msg_tensor, agent2_msg_tensor)
-            tensor_data.append(full_doc)
+            agent1_msg_segment = torch.cat([
+                torch.tensor([agent1_vocab["<BOS_IDX>"]],dtype=torch.long),
+                agent1_msg_tensor, 
+                torch.tensor([agent1_vocab["<EOS_IDX>"]],dtype=torch.long)],
+                dim = -1)
+            
+            input_doc_segment = torch.cat([
+                torch.tensor([agent1_vocab["<BEGIN_MD_IDX>"]],dtype=torch.long),
+                doc_msg_tensor, 
+                torch.tensor([agent1_vocab["<END_MD_IDX>"]],dtype=torch.long)],
+                dim = -1)
+            
+            
+            input_doc = torch.cat([agent1_msg_tensor, input_doc_segment],dim = -1)
+            
+            tensor_data.append((input_doc, agent2_msg_tensor))
 
             count = count + 1
-
             if count >= max_data:
                 break
 
@@ -202,15 +214,15 @@ if __name__ == "__main__":
     test_data = tensor_data[ valid_end_idx : ]
 
     train_iter = DataLoader(train_data, 
-                            batch_size=32,
+                            batch_size=64,
                             shuffle=False,
                             collate_fn=collate)
     valid_iter = DataLoader(valid_data, 
-                            batch_size=32,
+                            batch_size=64,
                             shuffle=False,
                             collate_fn=collate)
     test_iter = DataLoader(test_data, 
-                           batch_size=32,
+                           batch_size=64,
                            shuffle=False,
                            collate_fn=collate)
 

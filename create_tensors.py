@@ -3,21 +3,13 @@ import sys
 import os
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
-import chromadb
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
 
-from langchain_chroma import Chroma
-from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
-
-#from langchain_community.document_loaders import TextLoader
-#from langchain_text_splitters import CharacterTextSplitter
-#from model import Encoder, Decoder, Model
-
-import wikipedia_utils
+import text_utils
 
 from text_tensor_builder import TextTensorBuilder
 
@@ -32,20 +24,18 @@ def load_data(path: str="./Topical-Chat/conversations/train.json"):
 
         json_object = json.load(f)
     
-
     conversation_data = list()
     for conversation in json_object.values():
 
         all_message_data = conversation["content"]
 
-        agent1_data = list()
-        agent2_data = list()
+        agent1_data, agent2_data = list(), list()
         for message_data in all_message_data:
 
             msg_text = message_data["message"]
             msg_sentiment = message_data["sentiment"]
 
-            msg_text = wikipedia_utils.preprocess_text(msg_text)
+            msg_text = text_utils.preprocess_text(msg_text)
 
             msg_agent = message_data["agent"]
             msg_pair = (msg_text, msg_sentiment)
@@ -90,40 +80,16 @@ def collate(data_batch):
 # convert text to tensors and save
 
 if __name__ == "__main__":
-
-    db_name = DEFAULT_DB_NAME if len(sys.argv) < 2   \
-        else sys.argv[1] 
-    db_path = DEFAULT_DB_PATH if len(sys.argv) < 3   \
-        else sys.argv[2] 
     
-    if not os.path.isdir(db_path):
-        print("ERROR: DB folder could not be found!")
-        exit(EXIT_FAILURE)
-
-    embedding_function = SentenceTransformerEmbeddings(
-        model_name="all-MiniLM-L6-v2")
-
-    client = chromadb.PersistentClient(path="./chroma_data")
-    collection = client.get_collection("chatbot")
-
-    db_instance = Chroma(
-        client=client, 
-        collection_name="chatbot",
-        embedding_function=embedding_function
-    )
-    
-    db_documents = db_instance.get()["documents"]
     input_output_data = load_data() 
     
     query_data = list()
     for convo in input_output_data:
-        for agent in convo:
-            for msg in agent:
-                query_data.append(msg[0])
-    
-    input_documents = db_documents + query_data
+        for agent in convo: 
+            for message in agent:
+                query_data.append(message[0])
                 
-    tensor_builder = TextTensorBuilder(EMBED_DIM, input_documents)
+    tensor_builder = TextTensorBuilder(EMBED_DIM, query_data)
 
     tokenizer = tensor_builder.tokenizer
     en_vocab = tensor_builder.get_vocab()
@@ -138,27 +104,27 @@ if __name__ == "__main__":
     count = 0
 
     input_text_docs, output_text_docs = list(), list()
-    for convo in input_output_data[ : 2500]:
-        
-        agent1_data = convo[0]
-        agent2_data = convo[1]
+    '''
+    batch(input_output_data)
+    '''
 
+    wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+    for agent1_data, agent2_data in input_output_data[ : 2500]:
+        
         min_agent_data_length = len(min(agent1_data, agent2_data, key=len))
 
+        
         for i in range(min_agent_data_length):
-            
             input_msg = agent1_data[i][0]
             output_msg = agent2_data[i][0]
 
-            docs = db_instance.similarity_search(input_msg)
-            doc = docs[0].page_content
-
-            doc = wikipedia_utils.preprocess_text(doc)
+            doc = wikipedia_instance.run(input_msg)
+            doc = text_utils.preprocess_text(doc)
 
             input_msg_ids = tokenizer(input_msg)
             doc_ids = tokenizer(doc)
 
-            input_doc = input_msg_ids + ["<doc>"] + doc_ids
+            input_doc = input_msg_ids + ["<BEGINDOC>"] + doc_ids + ["<ENDDOC>"]
 
             agent1_msg_tensor = tensor_builder.convert_text_to_tensor(
                 input_msg, tokenize=False)

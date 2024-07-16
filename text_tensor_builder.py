@@ -16,7 +16,7 @@ class TextTensorBuilder:
                  data: List[str],
                  tokenizer: str="spacy",
                  tokenizer_lang: str="en_core_web_sm",
-                 specials: List[str]=["<unk>", "<pad>", "<bos>", "<eos>", "<doc>"],
+                 specials: List[str]=["<unk>", "<pad>", "<bos>", "<eos>", "<BEGINDOC>","<ENDDOC>"],
                  default_token: str="<unk>"):
         
         if default_token not in specials:

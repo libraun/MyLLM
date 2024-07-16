@@ -1,118 +1,164 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim
+
+MAXLEN = 20
+UPDATE_MSG = "Epoch {n}: Train loss={t_loss:.2f} | Eval loss = {e_loss:.2f}"
 
 class Encoder(nn.Module):
 
-    def __init__(self, 
-                 d_model: int, 
-                 embedding_dim: int, 
-                 hidden_dim: int, 
+    def __init__(self,
+                 d_model: int,
+                # embedding_dim: int,
+                 hidden_dim: int,
+                # n_layers: int,
                  padding_idx: int,
-                 n_layers: int):
-        
+                 device):
+
         super(Encoder, self).__init__()
 
-        self.input_layer = nn.Linear(d_model, 
-                                     hidden_dim)
+        self.output_layer = nn.GRU(hidden_dim,hidden_dim,
+                                   device=device)
 
-        self.output_layer = nn.LSTM(embedding_dim, 
-                                    hidden_dim,
-                                    num_layers=n_layers)
-
-        self.embeddings = nn.Embedding(d_model, 
-                                       embedding_dim,
-                                       padding_idx=padding_idx)
-        
+        self.embeddings = nn.Embedding(d_model, hidden_dim,
+                                       padding_idx=padding_idx,
+                                       device=device)
+        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
     def forward(self, x):
 
         x = self.embeddings(x)
-        _, (hidden, cell) = self.output_layer(x)
+        prediction, hidden = self.output_layer(x)
 
-        return hidden, cell
-        
-        
+        return prediction, hidden
+
 class Decoder(nn.Module):
-    
-    def __init__(self, 
-                 output_dim: int, 
-                 embedding_dim: int, 
-                 hidden_dim: int, 
-                 n_layers: int,
-                 padding_idx: int, 
+
+    def __init__(self,
+                 output_dim: int,
+                # embedding_dim: int,
+                 hidden_dim: int,
+                # n_layers: int,
+                 padding_idx: int,
+                 device,
                  dropout: float = 0.2):
 
         super(Decoder, self).__init__()
 
         self.output_dim = output_dim
-        self.embeddings = nn.Embedding(output_dim,
-                                       embedding_dim,
-                                       padding_idx=padding_idx)
+        self.embeddings = nn.Embedding(
+            output_dim, hidden_dim, padding_idx=padding_idx,
+            device=device)
 
         self.dropout = nn.Dropout(dropout)
 
-        self.rnn = nn.LSTM(embedding_dim,
-                           hidden_dim,
-                           num_layers=n_layers,
-                           dropout=dropout)
-        
-        self.fc_out = nn.Linear(hidden_dim,
-                                output_dim)
-    
+        self.rnn = nn.GRU(hidden_dim,hidden_dim,
+                          device=device)
 
-    def forward(self, input, hidden, cell): 
+        self.fc_out = nn.Linear(hidden_dim, output_dim,
+                                device=device)
+        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
 
-        input = self.embeddings(input.unsqueeze(0))
-        input = self.dropout(input)
+        self.device = device
 
-        output, (hidden, cell) = self.input_layer(input)
+    def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        prediction = self.fc_out(output.squeeze(0))
-        return prediction, hidden, cell
-    
+        decoder_input = torch.zeros(1,encoder_outputs.size(1),
+                                    dtype=torch.long).to(self.device)
+        decoder_outputs = []
+
+        length = MAXLEN if target_tensor is None else len(target_tensor)
+
+        for i in range(length):
+            decoder_output, hidden = self.forward_step(decoder_input, hidden)
+            decoder_outputs.append(decoder_output)
+
+            if target_tensor is not None:
+                decoder_input = target_tensor[i].unsqueeze(0) 
+            else:
+                _, topi = decoder_output.topk(1)
+                decoder_input = topi.squeeze(1).detach()  
+        decoder_outputs = torch.cat(decoder_outputs, dim=0)
+        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
+        return decoder_outputs, hidden
+
+    def forward_step(self, input, hidden):
+
+        input = self.embeddings(input)
+        input = F.relu(input)
+
+        output, hidden = self.rnn(input, hidden)
+
+        prediction = self.fc_out(output)
+        return prediction, hidden
+
 class Model(nn.Module):
 
-    def __init__(self, encoder: Encoder, decoder: Decoder):
+    def __init__(self, encoder, decoder, device):
 
         super(Model, self).__init__()
+
+        self.device = device
 
         self.encoder = encoder
         self.decoder = decoder
 
+        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
+
         self.trg_vocab_size = self.decoder.output_dim
 
     def forward(self, src, trg):
-        
-        trg_len, batch_size = trg.shape
 
-        outputs = torch.zeros(trg_len, batch_size, self.trg_vocab_size)
-        hidden, cell = self.encoder.forward(src)
-        for i, input_seq in enumerate(trg):
-            output, hidden, cell = self.decoder.forward(input_seq, hidden, cell)
-            outputs[i] = output
-        return outputs
-    
+        prediction, hidden = self.encoder.forward(src)
+        output, hidden = self.decoder.forward(prediction, hidden, trg)
+        return output
 
-    def predict(self, src, 
-                shape: tuple,
-                eos_idx: int=3, 
-                maxlength: int=10):
+    def evaluate_model(self, valid_iter):
 
-        trg_len, batch_size, vocab_size = shape
+        self.eval()
+        epoch_loss = 0
         with torch.no_grad():
-            src = src.to(self.device)
-            result = list()
-            for _ in range(maxlength):
+            for src, trg in valid_iter:
+                src,trg = src.to(self.device), trg.to(self.device)
+                out = self.forward(src, trg)
+                out = out.view(-1, out.shape[-1])
 
-                trg_pred = torch.zeros(
-                    trg_len, batch_size, vocab_size
-                ).to(self.device)
+                loss = self.criterion(out, trg.view(-1))
+                epoch_loss += loss.item()
+        return epoch_loss / len(valid_iter)
 
-                output = self.forward(src,trg_pred)
+    def train_model(self, train_iter, valid_iter, num_epochs: int,
+                    model_save_path: str | None = None, log_msg: bool=True):
 
-                output = output[1:].argmax(1)
+        train_loss_values = []
+        validation_loss_values = []
 
-                output = output.view(trg_len, batch_size)
+        for i in range(num_epochs):
+            epoch_loss = 0
+            self.train()
+            for src, trg in train_iter:
 
-                top1 = output[1:].argmax(-1).tolist()[0]
-                result.append(top1)
-        return result
+                src, trg = src.to(self.device), trg.to(self.device)
+                self.encoder.optimizer.zero_grad()
+                self.decoder.optimizer.zero_grad()
+
+                out = self.forward(src, trg)
+                loss = self.criterion(
+                    out.view(-1, out.size(-1)),trg.view(-1))
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
+                self.optimizer.step()
+                epoch_loss += loss.item()
+            # Add mean loss value as epoch loss.
+            epoch_loss = epoch_loss / len(train_iter)
+            val_loss = self.evaluate_model(valid_iter)
+
+            train_loss_values.append(epoch_loss)
+            validation_loss_values.append(val_loss)
+            if log_msg: # Output epoch progress if log_msg is enabled.
+                print(UPDATE_MSG.format(n = i + 1,
+                                        t_loss = epoch_loss,
+                                        e_loss = val_loss))
+        if model_save_path:
+            torch.save(self.state_dict(),model_save_path)
+        return train_loss_values, validation_loss_values

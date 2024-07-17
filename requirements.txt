@@ -1,0 +1,7 @@
+torch
+torchtext
+langchain
+chromadb
+langchain_chroma
+langchain_huggingface
+spacy

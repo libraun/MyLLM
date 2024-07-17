@@ -2,7 +2,7 @@
 
 It sometimes works!
 
-## Using this model
+### Using this model
 
 This model includes the Amazon Topical-Chat dataset, which is intended to be used alongside web-queried documents (e.g., from Wikipedia). This model requires inputs to be of the form:
 
@@ -17,9 +17,10 @@ paint dry).
 
 If you want the web page demo for this LLM, then ~~you can find it here~~ you're just gonna have to wait.
 
-## Why have you done this?
+### Why have you done this?
 
-For fun.
+For kicks.
 
-### Legal Stuff
+## Legal Stuff
+
 NOTICE: This project uses data available in Amazon's Topical-Chat repository (https://github.com/alexa/Topical-Chat). This project uses modified portions of the conversational training dataset, which are saved to the directory "./model_tensors". This repository will be updated to contain an unmodified copy of the original data license (named DATALICENSE), which can also be found here: https://github.com/alexa/Topical-Chat/blob/master/DATALICENSE

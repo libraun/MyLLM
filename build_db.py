@@ -32,7 +32,6 @@ def get_data(page_title_list: List[str]) -> None:
 
         if len(wiki_page) < 5:
             continue
-
         item = (page_title, wiki_page)
 
         processed_docs.append(item)
@@ -90,7 +89,6 @@ if __name__ == "__main__":
     topic_search_results = wikipedia_utils.filter_topics(collection, topic_search_results)
 
     random.shuffle(topic_search_results)
-
     # Retrieve wikipedia pages in rounds
     for _ in range(ROUNDS):
 

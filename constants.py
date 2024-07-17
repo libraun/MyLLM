@@ -17,6 +17,8 @@ TOTAL_NUM_PAGES: int = 5000
 ROUNDS: int = 500
 BATCH_LEN: int = int(TOTAL_NUM_PAGES / ROUNDS)
 
+BATCH_SIZE = 256
+
 # NN related constants
 
 EMBED_DIM = 512

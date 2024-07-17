@@ -9,7 +9,6 @@ from langchain_community.embeddings.sentence_transformer import (
     SentenceTransformerEmbeddings,
 )
 
-import chroma_utils
 import argparse
 
 from constants import DEFAULT_DB_NAME,DEFAULT_DB_PATH, \
@@ -30,8 +29,6 @@ if __name__ == "__main__":
     arg_parser.add_argument("--delete", default=False, type=bool)
 
     arg_parser.parse_args()
-
-    print(arg_parser._get_args())
 
     db_name = DEFAULT_DB_NAME if len(sys.argv) < 2   \
         else sys.argv[1] 

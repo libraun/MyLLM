@@ -1,5 +1,4 @@
 import sys
-import os.path
 import re
 import random
 import threading
@@ -12,7 +11,7 @@ from wikipedia.exceptions import DisambiguationError, PageError
 
 from constants import *
 
-import wikipedia_utils
+import text_utils
 
 CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
 
@@ -81,14 +80,15 @@ if __name__ == "__main__":
     collection = client.get_or_create_collection(db_name)
 
     # Load list of topics to query on wikipedia
-    topic_list = wikipedia_utils.load_topics_from_text("topic_list.txt")
+    topic_list = text_utils.load_topics_from_text("topic_list.txt")
 
-    topic_search_results = wikipedia_utils.query_wikipedia_topics(topic_list)
+    topic_search_results = text_utils.query_wikipedia_topics(topic_list)
     topic_search_results = [topic for topic in topic_search_results \
                             if "disambiguation" not in topic.lower()]
-    topic_search_results = wikipedia_utils.filter_topics(collection, topic_search_results)
+    topic_search_results = text_utils.filter_topics(collection, topic_search_results)
 
     random.shuffle(topic_search_results)
+
     # Retrieve wikipedia pages in rounds
     for _ in range(ROUNDS):
 
@@ -105,11 +105,9 @@ if __name__ == "__main__":
         titles = [d[0] for d in processed_docs]
         documents = [d[1] for d in processed_docs]
 
-        titles, documents = wikipedia_utils.filter_invalid_pages(titles, documents)
-
         assert len(titles) == len(documents)
 
-        documents = [wikipedia_utils.preprocess_text(doc) for doc in documents]
+        documents = [text_utils.preprocess_text(doc) for doc in documents]
 
         collection.add(documents=documents, ids=titles)
         

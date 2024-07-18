@@ -154,6 +154,7 @@ def train_model(encoder: Encoder,
 
             encoder_optimizer.step()
             decoder_optimizer.step()
+            
             epoch_loss += loss.item()
         # Add mean loss value as epoch loss.
         epoch_loss = epoch_loss / len(train_iter)

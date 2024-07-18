@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from constants import MAX_DECODER_OUTPUT_LEN, TRAIN_UPDATE_MSG
+from constants import MAX_DECODER_OUTPUT_LENGTH, TRAIN_UPDATE_MSG
 
 class Encoder(nn.Module):
 
@@ -59,7 +59,7 @@ class Decoder(nn.Module):
 
     def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        length = MAX_DECODER_OUTPUT_LEN if target_tensor is None else len(target_tensor)
+        length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
 
         batch_size = encoder_outputs.size(1)
         decoder_input = torch.ones(1, batch_size, dtype=torch.long).to(self.device)

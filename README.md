@@ -4,7 +4,7 @@ It sometimes works!
 
 ### Using this model
 
-This model includes the Amazon Topical-Chat dataset, which is intended to be used alongside web-queried documents (e.g., relevant passages from Wikipedia). It contains a pretrained encoder and decoder, but if you want to train this model on your own data, ensure that the data is of the form:
+This repository includes the Amazon Topical-Chat dataset, which is intended to be used alongside web-queried documents (e.g., relevant passages from Wikipedia). It contains a pretrained encoder and decoder, but if you want to train this model on your own data, ensure that the data is of the form:
 
 ((input_message, input_document), output_msg), where:
  * "input_msg" is an agent message (e.g., the "user message");

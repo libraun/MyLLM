@@ -54,28 +54,33 @@ class Decoder(nn.Module):
 
         self.fc_out = nn.Linear(hidden_dim, output_dim,
                                 device=device)
+        self.softmax = nn.Softmax(-1)
 
         self.device = device
 
     def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        decoder_input = torch.ones(1,encoder_outputs.size(1),
-                                    dtype=torch.long).to(self.device)
-        decoder_outputs = []
-
         length = MAXLEN if target_tensor is None else len(target_tensor)
+
+        batch_size = encoder_outputs.size(1)
+        decoder_input = torch.ones(1, batch_size, 
+                                   dtype=torch.long).to(self.device)
+        
+        decoder_outputs = torch.ones(length, batch_size, 
+                                     self.output_dim, 
+                                     dtype=torch.long)
 
         for i in range(length):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
-            decoder_outputs.append(decoder_output)
+            decoder_outputs[i] = decoder_output
 
             if target_tensor is not None:
                 decoder_input = target_tensor[i].unsqueeze(0)
             else:
                 _, topi = decoder_output.topk(1)
                 decoder_input = topi.squeeze(-1).detach()
-        decoder_outputs = torch.cat(decoder_outputs, dim=0)
-        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
+
+        decoder_outputs = self.softmax(decoder_outputs)
         return decoder_outputs, hidden
 
     def forward_step(self, input, hidden):
@@ -111,9 +116,9 @@ def evaluate_model(encoder: Encoder,
 
 def train_model(encoder: Encoder,
                 decoder: Decoder,
-                ignore_index: int, 
                 train_iter, 
                 valid_iter, 
+                criterion,
                 num_epochs: int,
                 encoder_save_path: str,
                 decoder_save_path: str,
@@ -125,8 +130,6 @@ def train_model(encoder: Encoder,
 
     encoder_optimizer = optim.Adam(encoder.parameters())
     decoder_optimizer = optim.Adam(decoder.parameters())
-
-    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
     for i in range(num_epochs):
         epoch_loss = 0
@@ -165,6 +168,6 @@ def train_model(encoder: Encoder,
                                     e_loss = val_loss))
     if encoder_save_path and decoder_save_path:
 
-        torch.save(encoder.state_dict(), "encoder.pt")
-        torch.save(decoder.state_dict(), "decoder.pt")
+        torch.save(encoder.state_dict(), encoder_save_path)
+        torch.save(decoder.state_dict(), decoder_save_path)
     return train_loss_values, validation_loss_values

@@ -1,14 +1,13 @@
+import pickle
+
 import torch
 import torchtext
 
 torchtext.disable_torchtext_deprecation_warning()
 
-import pickle
-
 from typing import List
 from collections import Counter, OrderedDict
 from torchtext.vocab import vocab
-
 from torchtext.data.utils import get_tokenizer
 
 class TextTensorBuilder:
@@ -16,22 +15,19 @@ class TextTensorBuilder:
     tokenizer = get_tokenizer("spacy","en_core_web_sm")
     
     @classmethod
-    def convert_text_to_tensor(cls, vocab_dict,
-                               doc: str | List[str], 
-                               tokenize: bool=True ) -> torch.Tensor: 
-        if tokenize:
-            tokens = cls.tokenizer(doc)
-        else:
-            tokens = doc
-        text_tensor = [vocab_dict[token] for token in tokens]
+    def text_to_tensor(self, lang_vocab,
+                       doc: str | List[str], 
+                       tokenize: bool=True ) -> torch.Tensor: 
+        
+        tokens = doc if not tokenize else self.tokenizer(doc)
+        
+        text_tensor = [lang_vocab[token] for token in tokens]
         text_tensor = torch.tensor(text_tensor, dtype=torch.long)
 
         return text_tensor
-    
+
     @classmethod
-    def build_vocab(cls,corpus: List[str],
-                    specials: List[str]=["<UNK_IDX>","<PAD_IDX>","<BOS_IDX>","<EOS_IDX>"],
-                    default_token:str = "<UNK_IDX>"):
+    def build_vocab(cls,corpus: List[str], specials: List[str]):
         counter = Counter()
         for text in corpus:
             tokens = cls.tokenizer(text)
@@ -44,16 +40,10 @@ class TextTensorBuilder:
         ordered_dict = OrderedDict(sorted_by_freq_tuples)    
         result = vocab(ordered_dict, specials=specials)
 
-        result.set_default_index(result[default_token])
-
         return result
     
-    @classmethod
-    def tokenize(cls, text):
-        return cls.tokenizer(text)
-    
     @staticmethod
-    def save_vocab(vocab, path) -> None:
-        with open(path,"wb+") as f:
-            pickle.dump(vocab, f)
+    def save_vocab(lang_vocab, filename: str):
 
+        with open(filename, "wb+") as f:
+            pickle.dump(lang_vocab)

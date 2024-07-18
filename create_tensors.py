@@ -3,29 +3,29 @@ import sys
 import os
 
 import math
+import itertools
 
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
-import chromadb
-
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
 from langchain_chroma import Chroma
-from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
-#from langchain_community.document_loaders import TextLoader
-#from langchain_text_splitters import CharacterTextSplitter
-#from model import Encoder, Decoder, Model
-
-import wikipedia_utils
+import text_utils
 
 from text_tensor_builder import TextTensorBuilder
 
 from constants import *
 
+import chromadb
 
-def load_data(use_langchain_query: bool=False,
-              path: str="./Topical-Chat/conversations/train.json"):
+
+def load_topicalchat_data(db_instance, wiki_instance,
+              path: str="./Topical-Chat/conversations/train.json",
+              maxcount: int=5000):
     if not os.path.isfile(path):
 
         exit(-1)
@@ -33,46 +33,75 @@ def load_data(use_langchain_query: bool=False,
     with open(path, "r") as f:
 
         json_object = json.load(f)
-
     conversation_data = list()
     for conversation in json_object.values():
+
+        if count >= maxcount:
+            break
 
         all_message_data = conversation["content"]
 
         agent1_data, agent2_data = list(), list()
         for message_data in all_message_data:
 
-            msg_text = message_data["message"]
-            msg_sentiment = message_data["sentiment"]
+            msg_text = text_utils.preprocess_text(message_data["message"])
 
-            msg_text = wikipedia_utils.preprocess_text(msg_text)
+            if message_data["agent"] == "agent_1":
+                if db_instance is not None:
+                    doc = db_instance.similarity_search(msg_text)[0].page_content
+                else:
+                    doc = wiki_instance.run(msg_text)
 
-            msg_agent = message_data["agent"]
-            msg_pair = (msg_text, msg_sentiment)
-
-            if msg_agent == "agent_1":
-                agent1_data.append(msg_pair)
+                doc = text_utils.preprocess_text(doc)
+                agent1_data.append((msg_text, doc))
             else:
-                agent2_data.append(msg_pair)
+                agent2_data.append(msg_text)
+            
+            if count >= maxcount:
+                break
+            else:
+                count = count + 1
+                sys.stdout.write(str(count) + " / " + str(max_data))
+                sys.stdout.flush()
+
+                sys.stdout.write("\r")
+
+        conversation_data += itertools.batched(list(zip(agent1_data,agent2_data)),n=2)
         conversation_data.append([agent1_data, agent2_data])
     return conversation_data
 
 def collate(data_batch):
 
-    global bos_idx, eos_idx, pad_idx
+    global BOS_IDX, EOS_IDX, BMD_IDX, EMD_IDX, PAD_IDX
     in_batch,out_batch = [],[]
     for (in_item, out_item) in data_batch:
-        in_batch.append(in_item)
+
+        in_msg_tensor, in_doc_tensor = in_item
+        in_msg_tensor = torch.cat([
+            torch.tensor([BOS_IDX], dtype=torch.long),
+            in_msg_tensor,
+            torch.tensor([EOS_IDX], dtype=torch.long)
+        ], dim=-1)
+        in_doc_tensor = torch.cat([
+            torch.tensor([BMD_IDX], dtype=torch.long),
+            in_doc_tensor,
+            torch.tensor([EMD_IDX], dtype=torch.long)
+        ], dim=-1)
+
+        in_batch.append(
+            torch.cat([
+                in_msg_tensor, in_doc_tensor
+            ], dim=-1)
+        )
         out_batch.append(
             torch.cat([
-                torch.tensor([bos_idx],dtype=torch.long),
+                torch.tensor([BOS_IDX], dtype=torch.long),
                 out_item,
-                torch.tensor([eos_idx],dtype=torch.long)], dim=-1
-            )
+                torch.tensor([EOS_IDX], dtype=torch.long)
+            ], dim=-1)
         )
-    in_batch = pad_sequence(in_batch, padding_value=pad_idx)
-    out_batch = pad_sequence(out_batch, padding_value=pad_idx)
-
+    in_batch = pad_sequence(in_batch,padding_value=PAD_IDX)
+    out_batch = pad_sequence(out_batch, padding_value=PAD_IDX)
     return in_batch,out_batch
 
 def load_stopwords(txt_path: str, sep:str=","):
@@ -93,10 +122,10 @@ if __name__ == "__main__":
     db_path = DEFAULT_DB_PATH if len(sys.argv) < 4   \
         else sys.argv[3] 
     
-    use_langchain_query = False
+    wikipedia_instance = None
     if os.path.isdir(db_path):
 
-        embedding_function = SentenceTransformerEmbeddings(
+        embedding_function = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2")
 
         client = chromadb.PersistentClient(path=db_path)
@@ -107,8 +136,6 @@ if __name__ == "__main__":
             collection_name="chatbot",
             embedding_function=embedding_function
         )
-
-        db_documents = db_instance.get()["documents"]
     else:
         print("""
               WARNING: Persistent ChromaDB instance could not be found.
@@ -118,25 +145,13 @@ if __name__ == "__main__":
               In the future, please consider adding preprocessed documents
               to a persistent chromaDB instance, and loading the sentence embeddings from there.
               """)
-        use_langchain_query = True
+        wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
         
     
-    input_output_data = load_data(use_langchain_query=use_langchain_query) 
+    all_data,agent1_msgs, agent2_msgs = load_data(
+        db_instance=db_instance, wiki_instance=wikipedia_instance) 
 
     stopwords = load_stopwords("stopwords.txt")
-
-    query_data = list()
-
-    agent1_msgs,agent2_msgs = [], []
-    for convo in input_output_data:
-        for agent in convo:
-            for msg in agent:
-                query_data.append(msg[0])
-
-                if msg[1] == "agent_1":
-                    agent1_msgs.append(msg[0])
-                else:
-                    agent2_msgs.append(msg[0])
 
     agent1_special_tokens = [
         "<UNK_IDX>", "<PAD_IDX>",
@@ -144,67 +159,37 @@ if __name__ == "__main__":
         "<BEGIN_MD_IDX>", "<END_MD_IDX>"
     ]
 
-    agent1_vocab = TextTensorBuilder.build_vocab(agent1_msgs, specials=agent1_special_tokens)
-    agent2_vocab = TextTensorBuilder.build_vocab(agent2_msgs)
+    all_vocab_list = list()
+    for (agent1_msg, agent1_md_doc), agent2_msg in all_data:
+        
+        all_vocab_list.append(agent1_msg)
+        all_vocab_list.append(agent1_md_doc)
 
-    TextTensorBuilder.save_vocab(agent1_vocab, "agent1_vocab.pickle")
-    TextTensorBuilder.save_vocab(agent2_vocab, "agent2_vocab.pickle")
+        all_vocab_list.append(agent2_msg)
 
+    en_vocab = TextTensorBuilder.build_vocab(all_vocab_list, specials=agent1_special_tokens)
 
-    bos_idx = agent1_vocab["<BOS_IDX>"]
-    eos_idx = agent1_vocab["<EOS_IDX>"]
-    pad_idx = agent1_vocab["<PAD_IDX>"]
+    TextTensorBuilder.save_vocab(en_vocab, "all_vocab.pickle")
+
+    BOS_IDX = en_vocab["<BOS_IDX>"]
+    EOS_IDX = en_vocab["<EOS_IDX>"]
+    PAD_IDX = en_vocab["<PAD_IDX>"]
+
+    BMD_IDX = en_vocab["<BEGIN_MD_IDX>"]
+    EMD_IDX = en_vocab["<END_MD_IDX>"]
 
     tensor_data = list()
-    count = 0
-    for agent1_data, agent2_data in input_output_data:
 
-        if count >= max_data:
-            break
+    wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+    for (agent1_msg, agent1_doc), agent2_msg in all_data:
+        
+        in_msg_tensor = TextTensorBuilder.text_to_tensor(agent1_msg)
+        in_md_tensor = TextTensorBuilder.text_to_tensor(agent1_doc)
+        
+        out_msg_tensor = TextTensorBuilder.text_to_tensor(agent2_msg)
+        
+        tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 
-        min_agent_data_length = len(min(agent1_data, agent2_data, key=len))
-        for i in range(min_agent_data_length):
-            
-            input_msg = agent1_data[i][0]
-            output_msg = agent2_data[i][0]
-
-            doc = db_instance.similarity_search(input_msg)[0].page_content
-
-            doc = wikipedia_utils.preprocess_text(doc)
-
-            agent1_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
-                agent1_vocab, input_msg )
-            doc_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
-                agent1_vocab, doc )
-
-            agent2_msg_tensor = TextTensorBuilder.convert_text_to_tensor(
-                agent2_vocab, output_msg )
-            
-            agent1_msg_segment = torch.cat([
-                torch.tensor([agent1_vocab["<BOS_IDX>"]],dtype=torch.long),
-                agent1_msg_tensor, 
-                torch.tensor([agent1_vocab["<EOS_IDX>"]],dtype=torch.long)],
-                dim = -1)
-            
-            input_doc_segment = torch.cat([
-                torch.tensor([agent1_vocab["<BEGIN_MD_IDX>"]],dtype=torch.long),
-                doc_msg_tensor, 
-                torch.tensor([agent1_vocab["<END_MD_IDX>"]],dtype=torch.long)],
-                dim = -1)
-            
-            
-            input_doc = torch.cat([agent1_msg_tensor, input_doc_segment],dim = -1)
-            
-            tensor_data.append((input_doc, agent2_msg_tensor))
-
-            count = count + 1
-            if count >= max_data:
-                break
-
-            sys.stdout.write(str(count) + " / " + str(max_data))
-            sys.stdout.flush()
-
-            sys.stdout.write("\r")
 
     train_end_idx = math.floor(len(tensor_data) * 0.8) 
     valid_end_idx = math.floor(len(tensor_data) * 0.9)

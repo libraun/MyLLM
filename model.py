@@ -95,74 +95,83 @@ class Decoder(nn.Module):
         prediction = self.fc_out(output)
         return prediction, hidden
 
-class Model(nn.Module):
 
-    def __init__(self, encoder,decoder, device):
+def evaluate_model(encoder: Encoder, 
+                   decoder: Decoder, 
+                   valid_iter, 
+                   criterion,
+                   device: torch.device):
 
-        super(Model, self).__init__()
+    encoder.eval()
+    decoder.eval()
+    epoch_loss = 0
+    with torch.no_grad():
+        for src, trg in valid_iter:
+            src,trg = src.to(device), trg.to(device)
+            prediction, hidden = encoder(src)
+            out, _ = decoder(prediction, hidden, trg)
 
-        self.device = device
+            loss = criterion(out.view(-1, out.size(-1)), trg.view(-1))
+            epoch_loss += loss.item()
+    return epoch_loss / len(valid_iter)
 
-        self.encoder = encoder
-        self.decoder = decoder
 
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
-        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
+def train_model(encoder: Encoder,
+                decoder: Decoder,
+                ignore_index: int, 
+                train_iter, 
+                valid_iter, 
+                num_epochs: int,
+                encoder_save_path: str,
+                decoder_save_path: str,
+                device: torch.device,
+                log_msg: bool=True):
 
-        self.trg_vocab_size = self.decoder.output_dim
+    train_loss_values = []
+    validation_loss_values = []
 
-    def forward(self, src, trg):
+    encoder_optimizer = optim.Adam(encoder.parameters())
+    decoder_optimizer = optim.Adam(decoder.parameters())
 
-        prediction, hidden = self.encoder.forward(src)
-        output, hidden = self.decoder.forward(prediction, hidden, trg)
-        return output
+    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
-    def evaluate_model(self, valid_iter):
-
-        self.eval()
+    for i in range(num_epochs):
         epoch_loss = 0
-        with torch.no_grad():
-            for src, trg in valid_iter:
-                src,trg = src.to(self.device), trg.to(self.device)
-                out = self.forward(src, trg)
-                out = out.view(-1, out.shape[-1])
 
-                loss = self.criterion(out, trg.view(-1))
-                epoch_loss += loss.item()
-        return epoch_loss / len(valid_iter)
+        decoder.train()
+        encoder.train()
 
-    def train_model(self, train_iter, valid_iter, num_epochs: int,
-                    model_save_path: str | None = None, log_msg: bool=True):
+        for src, trg in train_iter:
 
-        train_loss_values = []
-        validation_loss_values = []
+            src, trg = src.to(device), trg.to(device)
+            encoder_optimizer.zero_grad()
+            decoder_optimizer.zero_grad()
 
-        for i in range(num_epochs):
-            epoch_loss = 0
-            self.train()
-            for src, trg in train_iter:
+            prediction, hidden = encoder(src)
 
-                src, trg = src.to(self.device), trg.to(self.device)
-                self.encoder.optimizer.zero_grad()
-                self.decoder.optimizer.zero_grad()
+            output, _ = decoder(prediction, hidden, trg)
 
-                out = self.forward(src, trg)
-                loss = self.criterion(
-                    out.view(-1, out.size(-1)),trg.view(-1))
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
-                self.optimizer.step()
-                epoch_loss += loss.item()
-            # Add mean loss value as epoch loss.
-            epoch_loss = epoch_loss / len(train_iter)
-            val_loss = self.evaluate_model(valid_iter)
+            loss = criterion(output.view(-1, output.size(-1)), trg.view(-1))
+            loss.backward()
 
-            train_loss_values.append(epoch_loss)
-            validation_loss_values.append(val_loss)
-            if log_msg: # Output epoch progress if log_msg is enabled.
-                print(UPDATE_MSG.format(n = i + 1,
-                                        t_loss = epoch_loss,
-                                        e_loss = val_loss))
-        if model_save_path:
-            torch.save(self.state_dict(),model_save_path)
-        return train_loss_values, validation_loss_values
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1)
+
+            encoder_optimizer.step()
+            decoder_optimizer.step()
+            epoch_loss += loss.item()
+        # Add mean loss value as epoch loss.
+        epoch_loss = epoch_loss / len(train_iter)
+        val_loss = evaluate_model(encoder, decoder, valid_iter, criterion)
+
+        train_loss_values.append(epoch_loss)
+        validation_loss_values.append(val_loss)
+        if log_msg: # Output epoch progress if log_msg is enabled.
+            print(UPDATE_MSG.format(n = i + 1,
+                                    t_loss = epoch_loss,
+                                    e_loss = val_loss))
+    if encoder_save_path and decoder_save_path:
+
+        torch.save(encoder.state_dict(), "encoder.pt")
+        torch.save(decoder.state_dict(), "decoder.pt")
+    return train_loss_values, validation_loss_values

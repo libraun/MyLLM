@@ -22,4 +22,4 @@ For kicks.
 
 ## Legal Stuff
 
-NOTICE: This project uses data available in Amazon's Topical-Chat repository (https://github.com/alexa/Topical-Chat). This project uses modified portions of the conversational training dataset, which are saved to the directory "./model_tensors". This repository will be updated to contain an unmodified copy of the original data license (named DATALICENSE), which can also be found here: https://github.com/alexa/Topical-Chat/blob/master/DATALICENSE
+NOTICE: This project uses data available in Amazon's Topical-Chat repository (https://github.com/alexa/Topical-Chat). This project uses modified portions of the conversational training dataset, which are saved to the directory "./model_tensors". The original, unmodified  data license (named DATALICENSE) for Amazon's Topical-Chat dataset can be found here: https://github.com/alexa/Topical-Chat/blob/master/DATALICENSE

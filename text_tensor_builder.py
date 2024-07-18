@@ -15,11 +15,11 @@ class TextTensorBuilder:
     tokenizer = get_tokenizer("spacy","en_core_web_sm")
     
     @classmethod
-    def text_to_tensor(self, lang_vocab,
+    def text_to_tensor(cls, lang_vocab,
                        doc: str | List[str], 
                        tokenize: bool=True ) -> torch.Tensor: 
         
-        tokens = doc if not tokenize else self.tokenizer(doc)
+        tokens = doc if not tokenize else cls.tokenizer(doc)
         
         text_tensor = [lang_vocab[token] for token in tokens]
         text_tensor = torch.tensor(text_tensor, dtype=torch.long)
@@ -27,18 +27,23 @@ class TextTensorBuilder:
         return text_tensor
 
     @classmethod
-    def build_vocab(cls,corpus: List[str], specials: List[str]):
+    def build_vocab(cls,corpus: List[str], 
+                    specials: List[str],
+                    default_index: int = 0, 
+                    save_filepath: str=None):
         counter = Counter()
         for text in corpus:
             tokens = cls.tokenizer(text)
             counter.update(tokens)
 
-        sorted_by_freq_tuples = sorted(counter.items(), 
-                                       key=lambda x: x[1], 
-                                       reverse=True)
+        sorted_by_freq_tuples = sorted(counter.items(), key=lambda x: x[1], reverse=True)
         
         ordered_dict = OrderedDict(sorted_by_freq_tuples)    
         result = vocab(ordered_dict, specials=specials)
+
+        result.set_default_index(default_index)
+        if save_filepath is not None:
+            cls.save_vocab(result, save_filepath)
 
         return result
     
@@ -46,4 +51,4 @@ class TextTensorBuilder:
     def save_vocab(lang_vocab, filename: str):
 
         with open(filename, "wb+") as f:
-            pickle.dump(lang_vocab)
+            pickle.dump(lang_vocab, f)

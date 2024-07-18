@@ -10,11 +10,9 @@ class Encoder(nn.Module):
 
     def __init__(self,
                  d_model: int,
-                # embedding_dim: int,
                  hidden_dim: int,
-                # n_layers: int,
                  padding_idx: int,
-                 device):
+                 device: torch.device):
 
         super(Encoder, self).__init__()
 
@@ -25,12 +23,10 @@ class Encoder(nn.Module):
                                        padding_idx=padding_idx,
                                        device=device)
         self.dropout = nn.Dropout(0.5)
-        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
 
     def forward(self, x):
 
-        x = self.embeddings(x)
-        x = self.dropout(x)
+        x = self.dropout(self.embeddings(x))
         prediction, hidden = self.output_layer(x)
 
         return prediction, hidden
@@ -39,11 +35,9 @@ class Decoder(nn.Module):
 
     def __init__(self,
                  output_dim: int,
-                # embedding_dim: int,
                  hidden_dim: int,
-                # n_layers: int,
                  padding_idx: int,
-                 device,
+                 device: torch.device,
                  dropout: float = 0.5):
 
         super(Decoder, self).__init__()
@@ -60,13 +54,12 @@ class Decoder(nn.Module):
 
         self.fc_out = nn.Linear(hidden_dim, output_dim,
                                 device=device)
-        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
 
         self.device = device
 
     def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        decoder_input = torch.zeros(1,encoder_outputs.size(1),
+        decoder_input = torch.ones(1,encoder_outputs.size(1),
                                     dtype=torch.long).to(self.device)
         decoder_outputs = []
 

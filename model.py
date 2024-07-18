@@ -3,8 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-UPDATE_MSG = "Epoch {n}: Train loss={t_loss:.2f} | Eval loss = {e_loss:.2f}"
-MAXLEN = 20
+from constants import MAX_DECODER_OUTPUT_LENGTH, TRAIN_UPDATE_MSG
 
 class Encoder(nn.Module):
 
@@ -60,7 +59,7 @@ class Decoder(nn.Module):
 
     def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        length = MAXLEN if target_tensor is None else len(target_tensor)
+        length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
 
         batch_size = encoder_outputs.size(1)
         decoder_input = torch.ones(1, batch_size, 
@@ -163,9 +162,9 @@ def train_model(encoder: Encoder,
         train_loss_values.append(epoch_loss)
         validation_loss_values.append(val_loss)
         if log_msg: # Output epoch progress if log_msg is enabled.
-            print(UPDATE_MSG.format(n = i + 1,
-                                    t_loss = epoch_loss,
-                                    e_loss = val_loss))
+            print(TRAIN_UPDATE_MSG.format(n = i + 1,
+                                         t_loss = epoch_loss,
+                                         e_loss = val_loss))
     if encoder_save_path and decoder_save_path:
 
         torch.save(encoder.state_dict(), encoder_save_path)

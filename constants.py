@@ -25,3 +25,7 @@ EMBED_DIM = 512
 HIDDEN_DIM = 64
 
 NUM_EPOCHS = 10
+
+MAX_DECODER_OUTPUT_LENGTH = 20
+
+TRAIN_UPDATE_MSG = "Epoch {n}: Train loss={t_loss:.2f} | Eval loss = {e_loss:.2f}"

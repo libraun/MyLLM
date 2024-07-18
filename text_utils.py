@@ -1,5 +1,7 @@
 import re
 
+from typing import List
+
 # Match anything after a "Reference" (or "External Links") header
 CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
 
@@ -20,11 +22,10 @@ LEMMAS = {
     "[he|she|they|we|it]'d" : "[he|she|they|we|it] had",
 }
 
-def preprocess_text(text: str, repl: str=" ") -> str:
+def preprocess_text(text: str, repl: str=" ", stopwords: List[str]=None) -> str:
 
     # Convert text to lowercase
     text = text.lower()
-
     # Remove wikipedia-specific tags/unnecessary text
     text = re.sub(ENDTEXT_EXPR, repl, text)
     text = re.sub(WIKITAG_EXPR, repl, text)
@@ -39,6 +40,9 @@ def preprocess_text(text: str, repl: str=" ") -> str:
     text = re.sub(" ll ", " will ", text)
 
     text = re.sub(EXTRASPACE_EXPR, repl, text)
+
+    if stopwords is not None:
+        text = ' '.join([w for w in text.split(' ') if w not in stopwords])
 
     return text
 

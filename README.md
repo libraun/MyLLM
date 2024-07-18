@@ -11,7 +11,7 @@ This model includes the Amazon Topical-Chat dataset, which is intended to be use
  * "input_doc" is an additional message containing relevant (web-queried) data;
  * "output_msg" is another agent message (e.g., the target response to the input message)
 
-This repository contains a sample chroma database, which contains a myriad of Wikipedia articles by topic that is queried by similarity to an input document. Though not required, it is highly
+This repository contains a sample chroma database, which contains a myriad of Wikipedia articles by topic that can be queried by similarity to an input document. Though not required, it is highly
 recommended to use a persistent chroma instance to store sentence embeddings for the similarity search, as this will result in Wikipedia being queried directly (which is fine, if you like to watch 
 paint dry).
 

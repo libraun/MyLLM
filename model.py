@@ -68,7 +68,7 @@ class Decoder(nn.Module):
 
         for i in range(length):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
-            decoder_outputs[i] = decoder_output
+            decoder_outputs.append(decoder_output)
 
             if target_tensor is not None:
                 decoder_input = target_tensor[i].unsqueeze(0)

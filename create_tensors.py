@@ -3,7 +3,10 @@ import sys
 import os
 
 import math
-import itertools
+
+import chromadb
+
+from typing import List
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,59 +18,53 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 import text_utils
-
 from text_tensor_builder import TextTensorBuilder
-
 from constants import *
 
-import chromadb
+def pretty_print_progress(out: str):
 
+    sys.stdout.write(out)
+    sys.stdout.flush()
 
-def load_topicalchat_data(db_instance, wiki_instance,
-              path: str="./Topical-Chat/conversations/train.json",
-              maxcount: int=5000):
-    if not os.path.isfile(path):
+    sys.stdout.write("\r")
+    
 
-        exit(-1)
+# NOTE: maxcount can be any value greater than 0 (does not need to be less than number of messages in dataset)
+def get_topicalchat_data(
+        db_instance, wiki_instance,
+        json_data: dict,
+        maxcount: int=5000,
+        stopwords: List[str] = None):
+    
+    assert bool(db_instance) != bool(wiki_instance), \
+         "ERROR: Supply either a wikipedia instance or a DB instance, not both."
 
-    with open(path, "r") as f:
-
-        json_object = json.load(f)
     conversation_data = list()
-    for conversation in json_object.values():
-
-        if count >= maxcount:
-            break
-
-        all_message_data = conversation["content"]
+    count = 0
+    for conversations in json_data.values():
 
         agent1_data, agent2_data = list(), list()
-        for message_data in all_message_data:
+        for message_data in conversations["content"]:
 
             msg_text = text_utils.preprocess_text(message_data["message"])
-
             if message_data["agent"] == "agent_1":
+                
+                
                 if db_instance is not None:
                     doc = db_instance.similarity_search(msg_text)[0].page_content
                 else:
                     doc = wiki_instance.run(msg_text)
 
-                doc = text_utils.preprocess_text(doc)
+                doc = text_utils.preprocess_text(doc, stopwords=stopwords)
                 agent1_data.append((msg_text, doc))
             else:
                 agent2_data.append(msg_text)
             
+            count = count + 1
             if count >= maxcount:
-                break
-            else:
-                count = count + 1
-                sys.stdout.write(str(count) + " / " + str(max_data))
-                sys.stdout.flush()
-
-                sys.stdout.write("\r")
-
-        conversation_data += itertools.batched(list(zip(agent1_data,agent2_data)),n=2)
-        conversation_data.append([agent1_data, agent2_data])
+                return conversation_data + list(zip(agent1_data, agent2_data))
+            pretty_print_progress(str(count) + " / " + str(max_data))
+        conversation_data += list(zip(agent1_data,agent2_data))
     return conversation_data
 
 def collate(data_batch):
@@ -115,12 +112,12 @@ def load_stopwords(txt_path: str, sep:str=","):
 
 if __name__ == "__main__":
 
-    max_data = int(sys.argv[1])
+    N_ARGS = len(sys.argv)
 
-    db_name = DEFAULT_DB_NAME if len(sys.argv) < 3   \
-        else sys.argv[2] 
-    db_path = DEFAULT_DB_PATH if len(sys.argv) < 4   \
-        else sys.argv[3] 
+    max_data = DEFAULT_MAX_MSGS if N_ARGS < 2 else int(sys.argv[1])
+
+    db_name = DEFAULT_DB_NAME if N_ARGS < 3 else sys.argv[2] 
+    db_path = DEFAULT_DB_PATH if N_ARGS < 4 else sys.argv[3] 
     
     wikipedia_instance = None
     if os.path.isdir(db_path):
@@ -146,30 +143,30 @@ if __name__ == "__main__":
               to a persistent chromaDB instance, and loading the sentence embeddings from there.
               """)
         wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
-        
     
-    all_data,agent1_msgs, agent2_msgs = load_data(
-        db_instance=db_instance, wiki_instance=wikipedia_instance) 
+    # Stopwords: A list of (very common) strings to remove from the input metadata document.
+    stopwords = None if not STRIP_INPUT_STOPWORDS else load_stopwords("stopwords.txt")
 
-    stopwords = load_stopwords("stopwords.txt")
-
-    agent1_special_tokens = [
-        "<UNK_IDX>", "<PAD_IDX>",
-        "<BOS_IDX>", "<EOS_IDX>", 
-        "<BEGIN_MD_IDX>", "<END_MD_IDX>"
-    ]
+    # Load Topical-Chat dataset from from json
+    if not os.path.isfile(TOPICALCHAT_PATH):
+        exit(-1)
+    with open(TOPICALCHAT_PATH, "r") as f:
+        json_object = json.load(f)
+    # All data is a list containing tuples of the form:
+    # ((input_msg, input_doc), output_msg)
+    all_data = get_topicalchat_data(
+        db_instance=db_instance, wiki_instance=wikipedia_instance, 
+        json_data=json_object, maxcount=max_data,
+        stopwords=stopwords) 
 
     all_vocab_list = list()
-    for (agent1_msg, agent1_md_doc), agent2_msg in all_data:
+    for (in_msg, in_doc), out_msg in all_data:
+        all_vocab_list.append(in_msg)
+        all_vocab_list.append(in_doc)
+        all_vocab_list.append(out_msg)
         
-        all_vocab_list.append(agent1_msg)
-        all_vocab_list.append(agent1_md_doc)
-
-        all_vocab_list.append(agent2_msg)
-
-    en_vocab = TextTensorBuilder.build_vocab(all_vocab_list, specials=agent1_special_tokens)
-
-    TextTensorBuilder.save_vocab(en_vocab, "all_vocab.pickle")
+    en_vocab = TextTensorBuilder.build_vocab(
+        all_vocab_list, SPECIAL_TOKENS, save_filepath="en_vocab.pickle")
 
     BOS_IDX = en_vocab["<BOS_IDX>"]
     EOS_IDX = en_vocab["<EOS_IDX>"]
@@ -179,40 +176,30 @@ if __name__ == "__main__":
     EMD_IDX = en_vocab["<END_MD_IDX>"]
 
     tensor_data = list()
-
-    wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
     for (agent1_msg, agent1_doc), agent2_msg in all_data:
         
-        in_msg_tensor = TextTensorBuilder.text_to_tensor(agent1_msg)
-        in_md_tensor = TextTensorBuilder.text_to_tensor(agent1_doc)
+        in_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_msg)
+        in_md_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_doc)
         
-        out_msg_tensor = TextTensorBuilder.text_to_tensor(agent2_msg)
+        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg)
         
         tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 
-
     train_end_idx = math.floor(len(tensor_data) * 0.8) 
-    valid_end_idx = math.floor(len(tensor_data) * 0.9)
 
     train_data = tensor_data[ : train_end_idx]
-    valid_data = tensor_data[ train_end_idx : valid_end_idx ]
-    test_data = tensor_data[ valid_end_idx : ]
+    valid_data = tensor_data[ train_end_idx :  ]
 
     train_iter = DataLoader(train_data, 
-                            batch_size=64,
-                            shuffle=False,
+                            batch_size=DATALOADER_BATCH_SIZE,
+                            shuffle=SHUFFLE_DATALOADERS,
                             collate_fn=collate)
     valid_iter = DataLoader(valid_data, 
-                            batch_size=64,
-                            shuffle=False,
+                            batch_size=DATALOADER_BATCH_SIZE,
+                            shuffle=SHUFFLE_DATALOADERS,
                             collate_fn=collate)
-    test_iter = DataLoader(test_data, 
-                           batch_size=64,
-                           shuffle=False,
-                           collate_fn=collate)
 
     torch.save(train_iter, "./model_tensors/train_tensor.pt")
     torch.save(valid_iter, "./model_tensors/valid_tensor.pt")
-    torch.save(test_iter, "./model_tensors/test_tensor.pt")
 
     exit(EXIT_SUCCESS)

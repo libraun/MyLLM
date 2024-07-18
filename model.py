@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from constants import MAX_DECODER_OUTPUT_LENGTH, TRAIN_UPDATE_MSG
+from constants import MAX_DECODER_OUTPUT_LEN, TRAIN_UPDATE_MSG
 
 class Encoder(nn.Module):
 
@@ -11,7 +11,8 @@ class Encoder(nn.Module):
                  d_model: int,
                  hidden_dim: int,
                  padding_idx: int,
-                 device: torch.device):
+                 device: torch.device,
+                 dropout: float=0.5):
 
         super(Encoder, self).__init__()
 
@@ -21,7 +22,7 @@ class Encoder(nn.Module):
         self.embeddings = nn.Embedding(d_model, hidden_dim,
                                        padding_idx=padding_idx,
                                        device=device)
-        self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
 
@@ -53,21 +54,17 @@ class Decoder(nn.Module):
 
         self.fc_out = nn.Linear(hidden_dim, output_dim,
                                 device=device)
-        self.softmax = nn.Softmax(-1)
 
         self.device = device
 
     def forward(self, encoder_outputs, hidden, target_tensor=None):
 
-        length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
+        length = MAX_DECODER_OUTPUT_LEN if target_tensor is None else len(target_tensor)
 
         batch_size = encoder_outputs.size(1)
-        decoder_input = torch.ones(1, batch_size, 
-                                   dtype=torch.long).to(self.device)
+        decoder_input = torch.ones(1, batch_size, dtype=torch.long).to(self.device)
         
-        decoder_outputs = torch.ones(length, batch_size, 
-                                     self.output_dim, 
-                                     dtype=torch.long)
+        decoder_outputs = []
 
         for i in range(length):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
@@ -78,8 +75,8 @@ class Decoder(nn.Module):
             else:
                 _, topi = decoder_output.topk(1)
                 decoder_input = topi.squeeze(-1).detach()
-
-        decoder_outputs = self.softmax(decoder_outputs)
+        decoder_outputs = torch.cat(decoder_outputs, dim=0)
+        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
         return decoder_outputs, hidden
 
     def forward_step(self, input, hidden):
@@ -144,9 +141,9 @@ def train_model(encoder: Encoder,
 
             prediction, hidden = encoder(src)
 
-            output, _ = decoder(prediction, hidden, trg)
+            out, _ = decoder(prediction, hidden, trg)
 
-            loss = criterion(output.view(-1, output.size(-1)), trg.view(-1))
+            loss = criterion(out.view(-1, out.size(-1)), trg.view(-1))
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1)
@@ -154,7 +151,6 @@ def train_model(encoder: Encoder,
 
             encoder_optimizer.step()
             decoder_optimizer.step()
-            
             epoch_loss += loss.item()
         # Add mean loss value as epoch loss.
         epoch_loss = epoch_loss / len(train_iter)
@@ -164,8 +160,8 @@ def train_model(encoder: Encoder,
         validation_loss_values.append(val_loss)
         if log_msg: # Output epoch progress if log_msg is enabled.
             print(TRAIN_UPDATE_MSG.format(n = i + 1,
-                                         t_loss = epoch_loss,
-                                         e_loss = val_loss))
+                                    t_loss = epoch_loss,
+                                    e_loss = val_loss))
     if encoder_save_path and decoder_save_path:
 
         torch.save(encoder.state_dict(), encoder_save_path)

@@ -17,6 +17,8 @@ from langchain_community.utilities import WikipediaAPIWrapper
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 import text_utils
 from text_tensor_builder import TextTensorBuilder
 from constants import *
@@ -44,7 +46,7 @@ def get_topicalchat_data(
     for conversations in json_data.values():
 
         agent1_data, agent2_data = list(), list()
-        for message_data in conversations["content"]:
+        for i, message_data in enumerate(conversations["content"]):
 
             msg_text = text_utils.preprocess_text(message_data["message"])
             if message_data["agent"] == "agent_1":
@@ -64,7 +66,12 @@ def get_topicalchat_data(
             if count >= maxcount:
                 return conversation_data + list(zip(agent1_data, agent2_data))
             pretty_print_progress(str(count) + " / " + str(max_data))
-        conversation_data += list(zip(agent1_data,agent2_data))
+
+        convo = list(zip(agent1_data,agent2_data))
+
+#        convo[0] = (("<BCONVO_IDX> " + convo[0][0][0],convo[0][0][1]), convo[0][1])
+ #       convo[-1] = (convo[-1][0], convo[-1][1] + " <ECONVO_IDX>")
+        conversation_data += convo
     return conversation_data
 
 def collate(data_batch):
@@ -87,7 +94,7 @@ def collate(data_batch):
 
         in_batch.append(
             torch.cat([
-                in_msg_tensor, in_doc_tensor
+                in_doc_tensor, in_msg_tensor
             ], dim=-1)
         )
         out_batch.append(
@@ -145,13 +152,16 @@ if __name__ == "__main__":
         wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
     
     # Stopwords: A list of (very common) strings to remove from the input metadata document.
+    
     stopwords = None if not STRIP_INPUT_STOPWORDS else load_stopwords("stopwords.txt")
 
     # Load Topical-Chat dataset from from json
     if not os.path.isfile(TOPICALCHAT_PATH):
         exit(-1)
+        
     with open(TOPICALCHAT_PATH, "r") as f:
         json_object = json.load(f)
+
     # All data is a list containing tuples of the form:
     # ((input_msg, input_doc), output_msg)
     all_data = get_topicalchat_data(
@@ -164,7 +174,19 @@ if __name__ == "__main__":
         all_vocab_list.append(in_msg)
         all_vocab_list.append(in_doc)
         all_vocab_list.append(out_msg)
+    '''
+    if BUILD_STOPWORD_LIST:
         
+        tfidf_vectorizer = TfidfVectorizer(tokenizer=TextTensorBuilder.tokenizer, stop_words="english")
+        tfidf_vec = tfidf_vectorizer.  fit_transform(all_vocab_list)
+
+        stopwords = tfidf_vec.get_stop_words()
+        with open("STOPWORDS.txt", "w+") as f:
+            f.writelines(stopwords)
+
+        print("Stopwords built!")
+        exit(EXIT_SUCCESS)
+    '''
     en_vocab = TextTensorBuilder.build_vocab(
         all_vocab_list, SPECIAL_TOKENS, save_filepath="en_vocab.pickle")
 
@@ -178,10 +200,11 @@ if __name__ == "__main__":
     tensor_data = list()
     for (agent1_msg, agent1_doc), agent2_msg in all_data:
         
-        in_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_msg)
-        in_md_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_doc)
+        # Reverse input documents, according to Seq2Seq paper
+        in_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_msg, reverse=True)
+        in_md_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_doc, reverse=True)
         
-        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg)
+        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg, reverse=False)
         
         tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 

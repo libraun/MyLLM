@@ -23,17 +23,18 @@ LOG_COLLECTION_PROGRESS = True # Whether or not to log number of documents proce
 TOPICALCHAT_PATH: str = "./Topical-Chat/conversations/train.json"
 
 DEFAULT_MAX_MSGS: int = 50000
-STRIP_INPUT_STOPWORDS: bool = False 
+STRIP_INPUT_STOPWORDS: bool = True 
 
 # NN related constants
 
-DATALOADER_BATCH_SIZE: int = 256
+DATALOADER_BATCH_SIZE: int = 16
 SHUFFLE_DATALOADERS: bool = False
 
 SPECIAL_TOKENS: list = [
     "<UNK_IDX>", "<PAD_IDX>",
     "<BOS_IDX>", "<EOS_IDX>", 
-    "<BEGIN_MD_IDX>", "<END_MD_IDX>"
+    "<BEGIN_MD_IDX>", "<END_MD_IDX>",
+   # "<BCONVO_IDX>", "<ECONVO_IDX>"
 ]
 
 HIDDEN_DIM: int = 64

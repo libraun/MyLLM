@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,11 +14,14 @@ class Encoder(nn.Module):
                  hidden_dim: int,
                  padding_idx: int,
                  device: torch.device,
+                 num_layers: int=2,
                  dropout: float=0.5):
 
         super(Encoder, self).__init__()
 
         self.output_layer = nn.GRU(hidden_dim,hidden_dim,
+                                   num_layers=num_layers,
+                                   dropout=dropout,
                                    device=device)
 
         self.embeddings = nn.Embedding(d_model, hidden_dim,
@@ -38,6 +43,7 @@ class Decoder(nn.Module):
                  hidden_dim: int,
                  padding_idx: int,
                  device: torch.device,
+                 num_layers: int=2,
                  dropout: float = 0.5):
 
         super(Decoder, self).__init__()
@@ -47,9 +53,9 @@ class Decoder(nn.Module):
             output_dim, hidden_dim, padding_idx=padding_idx,
             device=device)
 
-        self.dropout = nn.Dropout(dropout)
-
-        self.rnn = nn.GRU(hidden_dim,hidden_dim,
+        self.rnn = nn.GRU(hidden_dim, hidden_dim,
+                          num_layers=num_layers,
+                          dropout=dropout,
                           device=device)
 
         self.fc_out = nn.Linear(hidden_dim, output_dim,
@@ -57,12 +63,14 @@ class Decoder(nn.Module):
 
         self.device = device
 
-    def forward(self, encoder_outputs, hidden, target_tensor=None):
+    def forward(self, encoder_outputs, hidden, 
+                target_tensor=None,
+                teacher_forcing_ratio: float=1.0):
 
         length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
 
         batch_size = encoder_outputs.size(1)
-        decoder_input = torch.ones(1, batch_size, dtype=torch.long).to(self.device)
+        decoder_input = torch.ones(1, batch_size, dtype=torch.long, device=self.device)
         
         decoder_outputs = []
 
@@ -70,19 +78,18 @@ class Decoder(nn.Module):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
             decoder_outputs.append(decoder_output)
 
-            if target_tensor is not None:
+            if target_tensor is not None and random.random() < teacher_forcing_ratio:
                 decoder_input = target_tensor[i].unsqueeze(0)
             else:
                 _, topi = decoder_output.topk(1)
-                decoder_input = topi.squeeze(-1).detach()
+                decoder_input = topi.squeeze(-1)
         decoder_outputs = torch.cat(decoder_outputs, dim=0)
-        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
         return decoder_outputs, hidden
 
     def forward_step(self, input, hidden):
 
         input = self.embeddings(input)
-        input = F.relu(self.dropout(input))
+        input = F.relu(input)
 
         output, hidden = self.rnn(input, hidden)
 

@@ -17,9 +17,14 @@ class TextTensorBuilder:
     @classmethod
     def text_to_tensor(cls, lang_vocab,
                        doc: str | List[str], 
-                       tokenize: bool=True ) -> torch.Tensor: 
+                       tokenize: bool=True,
+                       reverse: bool=False ) -> torch.Tensor: 
         
         tokens = doc if not tokenize else cls.tokenizer(doc)
+
+        # Optionally reverse input sequence (trusting the paper)
+        if reverse:
+            tokens.reverse()
         
         text_tensor = [lang_vocab[token] for token in tokens]
         text_tensor = torch.tensor(text_tensor, dtype=torch.long)

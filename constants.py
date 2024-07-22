@@ -17,7 +17,7 @@ TOTAL_NUM_PAGES: int = 5000
 COLLECTION_ROUNDS: int = 500
 BATCH_LEN: int = int(TOTAL_NUM_PAGES / COLLECTION_ROUNDS)
 
-LOG_COLLECTION_PROGRESS = True # Whether or not to log number of documents processed by workers
+LOG_COLLECTION_PROGRESS: bool = True # Whether or not to log number of documents processed by workers
 
 # Preprocessing Constants
 TOPICALCHAT_PATH: str = "./Topical-Chat/conversations/train.json"
@@ -32,11 +32,13 @@ REVERSE_ENCODER_INPUTS: bool = True
 DATALOADER_BATCH_SIZE: int = 16
 SHUFFLE_DATALOADERS: bool = False
 
+DATASET_SPLIT_RATIO: float = 0.8
+
 SPECIAL_TOKENS: list = [
     "<UNK_IDX>", "<PAD_IDX>",
     "<BOS_IDX>", "<EOS_IDX>", 
-    "<BEGIN_MD_IDX>", "<END_MD_IDX>",
-   # "<BCONVO_IDX>", "<ECONVO_IDX>"
+    "<BMD_IDX>", "<EMD_IDX>",
+    "<BCONVO_IDX>", "<ECONVO_IDX>"
 ]
 
 HIDDEN_DIM: int = 64

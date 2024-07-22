@@ -128,6 +128,7 @@ if __name__ == "__main__":
     
     wikipedia_instance = None
     if os.path.isdir(db_path):
+        
 
         embedding_function = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2")
@@ -137,7 +138,7 @@ if __name__ == "__main__":
 
         db_instance = Chroma(
             client=client, 
-            collection_name="chatbot",
+            collection_name=db_name,
             embedding_function=embedding_function
         )
     else:
@@ -174,19 +175,7 @@ if __name__ == "__main__":
         all_vocab_list.append(in_msg)
         all_vocab_list.append(in_doc)
         all_vocab_list.append(out_msg)
-    '''
-    if BUILD_STOPWORD_LIST:
-        
-        tfidf_vectorizer = TfidfVectorizer(tokenizer=TextTensorBuilder.tokenizer, stop_words="english")
-        tfidf_vec = tfidf_vectorizer.  fit_transform(all_vocab_list)
 
-        stopwords = tfidf_vec.get_stop_words()
-        with open("STOPWORDS.txt", "w+") as f:
-            f.writelines(stopwords)
-
-        print("Stopwords built!")
-        exit(EXIT_SUCCESS)
-    '''
     en_vocab = TextTensorBuilder.build_vocab(
         all_vocab_list, SPECIAL_TOKENS, save_filepath="en_vocab.pickle")
 
@@ -194,8 +183,8 @@ if __name__ == "__main__":
     EOS_IDX = en_vocab["<EOS_IDX>"]
     PAD_IDX = en_vocab["<PAD_IDX>"]
 
-    BMD_IDX = en_vocab["<BEGIN_MD_IDX>"]
-    EMD_IDX = en_vocab["<END_MD_IDX>"]
+    BMD_IDX = en_vocab["<BMD_IDX>"]
+    EMD_IDX = en_vocab["<EMD_IDX>"]
 
     tensor_data = list()
     for (agent1_msg, agent1_doc), agent2_msg in all_data:
@@ -210,7 +199,7 @@ if __name__ == "__main__":
         
         tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 
-    train_end_idx = math.floor(len(tensor_data) * 0.8) 
+    train_end_idx = math.floor(len(tensor_data) * DATASET_SPLIT_RATIO) 
 
     train_data = tensor_data[ : train_end_idx]
     valid_data = tensor_data[ train_end_idx :  ]

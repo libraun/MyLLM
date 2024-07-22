@@ -6,8 +6,6 @@ import math
 
 import chromadb
 
-from typing import List
-
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -17,13 +15,16 @@ from langchain_community.utilities import WikipediaAPIWrapper
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
-from sklearn.feature_extraction.text import TfidfVectorizer
+import logging
 
-import text_utils
+from typing import List
+
+import text_utils as text
+
 from text_tensor_builder import TextTensorBuilder
 from constants import *
 
-def pretty_print_progress(out: str):
+def pretty_print(out: str):
 
     sys.stdout.write(out)
     sys.stdout.flush()
@@ -32,87 +33,59 @@ def pretty_print_progress(out: str):
     
 
 # NOTE: maxcount can be any value greater than 0 (does not need to be less than number of messages in dataset)
-def get_topicalchat_data(
-        db_instance, wiki_instance,
-        json_data: dict,
-        maxcount: int=5000,
-        stopwords: List[str] = None):
+def get_topicalchat_data(query_config: Chroma | WikipediaQueryRun,
+                         json_data: dict,
+                         maxcount: int=5000,
+                         stopwords: List[str] = None,
+                         use_convo_tags: bool = False):
     
-    assert bool(db_instance) != bool(wiki_instance), \
-         "ERROR: Supply either a wikipedia instance or a DB instance, not both."
+    maxcount_str = str(maxcount)
 
     conversation_data = list()
     count = 0
     for conversations in json_data.values():
 
         agent1_data, agent2_data = list(), list()
-        for i, message_data in enumerate(conversations["content"]):
+        for message_data in conversations["content"]:
 
-            msg_text = text_utils.preprocess_text(message_data["message"])
+            msg_text = text.preprocess_text(message_data["message"])
             if message_data["agent"] == "agent_1":
                 
-                
-                if db_instance is not None:
+                if type(db_instance) is Chroma:
                     doc = db_instance.similarity_search(msg_text)[0].page_content
                 else:
-                    doc = wiki_instance.run(msg_text)
+                    doc = query_config.run(msg_text)
 
-                doc = text_utils.preprocess_text(doc, stopwords=stopwords)
+                doc = text.preprocess_text(doc, stopwords=stopwords)
                 agent1_data.append((msg_text, doc))
             else:
                 agent2_data.append(msg_text)
             
-            count = count + 1
+            count += 1
+            # if target message count has been reached, concatenate past convos with current convos and return.
             if count >= maxcount:
                 return conversation_data + list(zip(agent1_data, agent2_data))
-            pretty_print_progress(str(count) + " / " + str(max_data))
-
+            else:
+                pretty_print('/'.join([str(count), maxcount_str]))
+            
         convo = list(zip(agent1_data,agent2_data))
+        # Optionally concatenate conversation begin and end tags to current conversation.
+        # If using these, make sure the data is unshuffled or batched accordingly.
+        if use_convo_tags:
 
-#        convo[0] = (("<BCONVO_IDX> " + convo[0][0][0],convo[0][0][1]), convo[0][1])
- #       convo[-1] = (convo[-1][0], convo[-1][1] + " <ECONVO_IDX>")
+            convo[0] = (("<BCONVO_IDX> " + convo[0][0][0],convo[0][0][1]), convo[0][1])
+            convo[-1] = (convo[-1][0], convo[-1][1] + " <ECONVO_IDX>")
+
         conversation_data += convo
     return conversation_data
 
 def collate(data_batch):
 
     global BOS_IDX, EOS_IDX, BMD_IDX, EMD_IDX, PAD_IDX
-    in_batch,out_batch = [],[]
-    for (in_item, out_item) in data_batch:
-
-        in_msg_tensor, in_doc_tensor = in_item
-        in_msg_tensor = torch.cat([
-            torch.tensor([BOS_IDX], dtype=torch.long),
-            in_msg_tensor,
-            torch.tensor([EOS_IDX], dtype=torch.long)
-        ], dim=-1)
-        in_doc_tensor = torch.cat([
-            torch.tensor([BMD_IDX], dtype=torch.long),
-            in_doc_tensor,
-            torch.tensor([EMD_IDX], dtype=torch.long)
-        ], dim=-1)
-
-        in_batch.append(
-            torch.cat([
-                in_doc_tensor, in_msg_tensor
-            ], dim=-1)
-        )
-        out_batch.append(
-            torch.cat([
-                torch.tensor([BOS_IDX], dtype=torch.long),
-                out_item,
-                torch.tensor([EOS_IDX], dtype=torch.long)
-            ], dim=-1)
-        )
+    in_batch, out_batch = *data_batch
     in_batch = pad_sequence(in_batch,padding_value=PAD_IDX)
     out_batch = pad_sequence(out_batch, padding_value=PAD_IDX)
     return in_batch,out_batch
-
-def load_stopwords(txt_path: str, sep:str=","):
-    with open(txt_path, "r") as f:
-        text = f.read()
-    text = text.strip(" ")
-    return text.split(sep) 
 
 # Query chroma using langchain for similar input documents, 
 # convert text to tensors and save
@@ -126,10 +99,11 @@ if __name__ == "__main__":
     db_name = DEFAULT_DB_NAME if N_ARGS < 3 else sys.argv[2] 
     db_path = DEFAULT_DB_PATH if N_ARGS < 4 else sys.argv[3] 
     
-    wikipedia_instance = None
+    db_instance = None
+
+    # Check if the given (chroma) database path exists and load if so
     if os.path.isdir(db_path):
         
-
         embedding_function = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2")
 
@@ -141,24 +115,24 @@ if __name__ == "__main__":
             collection_name=db_name,
             embedding_function=embedding_function
         )
+    # Else, use Wikipedia API to query input data (slow due to requests)
     else:
-        print("""
+        logging.warn("""
               WARNING: Persistent ChromaDB instance could not be found.
-              Program will use Langchain wikipedia to directly query input documents, 
-              which will be very, very slow.
+              Program will use Langchain to directly query Wikipedia from input
+              documents, which will be very, very slow.
 
-              In the future, please consider adding preprocessed documents
-              to a persistent chromaDB instance, and loading the sentence embeddings from there.
+              In the future, please consider using the sample ChromaDB instance provided,
+              or creating your own ChromaDB by adding preprocessed documents to a persistent Chroma instance.
               """)
-        wikipedia_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+        db_instance = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
     
     # Stopwords: A list of (very common) strings to remove from the input metadata document.
-    
-    stopwords = None if not STRIP_INPUT_STOPWORDS else load_stopwords("stopwords.txt")
+    stopwords = None if not STRIP_INPUT_STOPWORDS else text.load_tokens_from_text("stopwords.txt")
 
     # Load Topical-Chat dataset from from json
     if not os.path.isfile(TOPICALCHAT_PATH):
-        exit(-1)
+        exit(EXIT_FAILURE)
 
     with open(TOPICALCHAT_PATH, "r") as f:
         json_object = json.load(f)
@@ -166,52 +140,60 @@ if __name__ == "__main__":
     # All data is a list containing tuples of the form:
     # ((input_msg, input_doc), output_msg)
     all_data = get_topicalchat_data(
-        db_instance=db_instance, wiki_instance=wikipedia_instance, 
-        json_data=json_object, maxcount=max_data,
-        stopwords=stopwords) 
+        db_instance=db_instance, json_data=json_object, 
+        maxcount=max_data, stopwords=stopwords) 
 
-    all_vocab_list = list()
-    for (in_msg, in_doc), out_msg in all_data:
-        all_vocab_list.append(in_msg)
-        all_vocab_list.append(in_doc)
-        all_vocab_list.append(out_msg)
-
+    # Build and save current vocab for model lookups
     en_vocab = TextTensorBuilder.build_vocab(
-        all_vocab_list, SPECIAL_TOKENS, save_filepath="en_vocab.pickle")
+        corpus=tuple(sum(all_data)), specials=SPECIAL_TOKENS, 
+        save_filepath="en_vocab.pickle")
+    
+    BOS_IDX, EOS_IDX, PAD_IDX, BMD_IDX, EMD_IDX = en_vocab.lookup_tokens(
+        ("<BOS_IDX>", "<EOS_IDX>", "<PAD_IDX>", "<EMD_IDX>", "<BMD_IDX>") )
 
-    BOS_IDX = en_vocab["<BOS_IDX>"]
-    EOS_IDX = en_vocab["<EOS_IDX>"]
-    PAD_IDX = en_vocab["<PAD_IDX>"]
-
-    BMD_IDX = en_vocab["<BMD_IDX>"]
-    EMD_IDX = en_vocab["<EMD_IDX>"]
-
+    # Tensorize docs before creating a DataLoader instance
     tensor_data = list()
     for (agent1_msg, agent1_doc), agent2_msg in all_data:
-        
+
         # Reverse input documents, according to Seq2Seq paper
         in_msg_tensor = TextTensorBuilder.text_to_tensor(
-            en_vocab, agent1_msg, reverse=REVERSE_ENCODER_INPUTS)
-        in_md_tensor = TextTensorBuilder.text_to_tensor(
-            en_vocab, agent1_doc, reverse=REVERSE_ENCODER_INPUTS)
+            en_vocab, agent1_msg, reverse=REVERSE_ENCODER_INPUTS )
         
-        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg)
+        in_md_tensor = TextTensorBuilder.text_to_tensor(
+            en_vocab, agent1_doc, reverse=REVERSE_ENCODER_INPUTS )
+        
+        in_msg_tensor = torch.cat([
+            torch.tensor([BOS_IDX], dtype=torch.long),
+            in_msg_tensor,
+            torch.tensor([EOS_IDX], dtype=torch.long)
+        ], dim=-1)
+        in_doc_tensor = torch.cat([
+            torch.tensor([BMD_IDX], dtype=torch.long),
+            in_doc_tensor,
+            torch.tensor([EMD_IDX], dtype=torch.long)
+        ], dim=-1)
+
+        input_seq = torch.cat([in_msg_tensor, in_doc_tensor],dim=-1)
+        out_msg_tensor = torch.cat([
+                torch.tensor([BOS_IDX], dtype=torch.long),
+                TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg),
+                torch.tensor([EOS_IDX], dtype=torch.long)
+        ], dim=-1)
+
         
         tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 
+    # Create train/validation splits, save, and exit.
     train_end_idx = math.floor(len(tensor_data) * DATASET_SPLIT_RATIO) 
 
-    train_data = tensor_data[ : train_end_idx]
-    valid_data = tensor_data[ train_end_idx :  ]
-
-    train_iter = DataLoader(train_data, 
-                            batch_size=DATALOADER_BATCH_SIZE,
-                            shuffle=SHUFFLE_DATALOADERS,
-                            collate_fn=collate)
-    valid_iter = DataLoader(valid_data, 
-                            batch_size=DATALOADER_BATCH_SIZE,
-                            shuffle=SHUFFLE_DATALOADERS,
-                            collate_fn=collate)
+    train_iter = DataLoader(
+        tensor_data[ : train_end_idx], 
+        batch_size = DATALOADER_BATCH_SIZE,
+        shuffle = SHUFFLE_DATALOADERS, collate_fn=collate)
+    valid_iter = DataLoader(
+        valid_data = tensor_data[train_end_idx : ], 
+        batch_size = DATALOADER_BATCH_SIZE,
+        shuffle = SHUFFLE_DATALOADERS, collate_fn=collate)
 
     torch.save(train_iter, "./model_tensors/train_tensor.pt")
     torch.save(valid_iter, "./model_tensors/valid_tensor.pt")

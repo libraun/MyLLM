@@ -158,7 +158,7 @@ if __name__ == "__main__":
     # Load Topical-Chat dataset from from json
     if not os.path.isfile(TOPICALCHAT_PATH):
         exit(-1)
-        
+
     with open(TOPICALCHAT_PATH, "r") as f:
         json_object = json.load(f)
 
@@ -201,10 +201,12 @@ if __name__ == "__main__":
     for (agent1_msg, agent1_doc), agent2_msg in all_data:
         
         # Reverse input documents, according to Seq2Seq paper
-        in_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_msg, reverse=True)
-        in_md_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent1_doc, reverse=True)
+        in_msg_tensor = TextTensorBuilder.text_to_tensor(
+            en_vocab, agent1_msg, reverse=REVERSE_ENCODER_INPUTS)
+        in_md_tensor = TextTensorBuilder.text_to_tensor(
+            en_vocab, agent1_doc, reverse=REVERSE_ENCODER_INPUTS)
         
-        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg, reverse=False)
+        out_msg_tensor = TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg)
         
         tensor_data.append(((in_msg_tensor, in_md_tensor), out_msg_tensor))
 

@@ -27,6 +27,8 @@ STRIP_INPUT_STOPWORDS: bool = True
 
 # NN related constants
 
+REVERSE_ENCODER_INPUTS: bool = True
+
 DATALOADER_BATCH_SIZE: int = 16
 SHUFFLE_DATALOADERS: bool = False
 

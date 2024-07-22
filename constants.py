@@ -25,17 +25,21 @@ TOPICALCHAT_PATH: str = "./Topical-Chat/conversations/train.json"
 DEFAULT_MAX_MSGS: int = 50000
 STRIP_INPUT_STOPWORDS: bool = True 
 
-# NN related constants
+''' NN related constants '''
 
 REVERSE_ENCODER_INPUTS: bool = True
 
-DATALOADER_BATCH_SIZE: int = 16
+MODEL_BATCH_SIZE: int = 16
 SHUFFLE_DATALOADERS: bool = False
 
+# If true, drops the last batch for dataloaders.
+DROP_LAST_BATCH: bool=False
+
+# Size ratio for training and validation splits. A value of 0.8 means 80% of the data is used for training.
 DATASET_SPLIT_RATIO: float = 0.8
 
 SPECIAL_TOKENS: list = [
-    "<UNK_IDX>", "<PAD_IDX>",
+    "<PAD_IDX>", "<UNK_IDX>",
     "<BOS_IDX>", "<EOS_IDX>", 
     "<BMD_IDX>", "<EMD_IDX>",
     "<BCONVO_IDX>", "<ECONVO_IDX>"

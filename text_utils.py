@@ -16,12 +16,6 @@ EXTRASPACE_EXPR = re.compile("  +")
 
 PUNCT_EXPR = re.compile(r"[^a-z0-9|\.|\?]")
 
-PRONOUNS_EXPR = re.compile("[he|she|they|we|it]")
-
-LEMMAS = {
-    "[he|she|they|we|it]'d" : "[he|she|they|we|it] had",
-}
-
 def preprocess_text(text: str, repl: str=" ", stopwords: List[str]=None) -> str:
 
     # Convert text to lowercase
@@ -38,6 +32,7 @@ def preprocess_text(text: str, repl: str=" ", stopwords: List[str]=None) -> str:
     text = re.sub(" ve ", " have ", text)
     text = re.sub(" m ", " am ", text)
     text = re.sub(" ll ", " will ", text)
+    text = re.sub("n t | nt ", " not ", text)
 
     text = re.sub(EXTRASPACE_EXPR, repl, text)
 
@@ -50,4 +45,4 @@ def load_stopwords(txt_path: str, sep:str=","):
     with open(txt_path, "r") as f:
         text = f.read()
     text = text.strip(" ")
-    return text.split(sep) 
+    return list(set(text.split(sep)))

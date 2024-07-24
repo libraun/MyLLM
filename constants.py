@@ -15,9 +15,7 @@ LOG_TIME_INFO: bool = True
 
 TOTAL_NUM_PAGES: int = 5000
 COLLECTION_ROUNDS: int = 500
-BATCH_LEN: int = int(TOTAL_NUM_PAGES / COLLECTION_ROUNDS)
-
-LOG_COLLECTION_PROGRESS: bool = True # Whether or not to log number of documents processed by workers
+CHROMA_BATCH_LEN: int = int(TOTAL_NUM_PAGES / COLLECTION_ROUNDS)
 
 # Preprocessing Constants
 TOPICALCHAT_PATH: str = "./Topical-Chat/conversations/train.json"
@@ -27,22 +25,16 @@ STRIP_INPUT_STOPWORDS: bool = True
 
 ''' NN related constants '''
 
-REVERSE_ENCODER_INPUTS: bool = True
-
-MODEL_BATCH_SIZE: int = 16
-SHUFFLE_DATALOADERS: bool = False
-
-# If true, drops the last batch for dataloaders.
-DROP_LAST_BATCH: bool=False
+REVERSE_ENCODER_INPUTS: bool = False
 
 # Size ratio for training and validation splits. A value of 0.8 means 80% of the data is used for training.
 DATASET_SPLIT_RATIO: float = 0.8
 
+# Tokens used to indicate certain text spans.
 SPECIAL_TOKENS: list = [
-    "<PAD_IDX>", "<UNK_IDX>",
-    "<BOS_IDX>", "<EOS_IDX>", 
-    "<BMD_IDX>", "<EMD_IDX>",
-    "<BCONVO_IDX>", "<ECONVO_IDX>"
+    "<PAD>", "<UNK>",
+    "<BOS>", "<EOS>", 
+    "<BMD>", "<EMD>",
 ]
 
 HIDDEN_DIM: int = 64

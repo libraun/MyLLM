@@ -3,6 +3,7 @@ import sys
 import os
 
 import argparse
+import itertools
 
 import math
 
@@ -36,50 +37,37 @@ def pretty_print(out: str):
     
 
 # NOTE: maxcount can be any value greater than 0 (does not need to be less than number of messages in dataset)
-def get_topicalchat_data(query_config: Chroma | WikipediaQueryRun,
-                         json_data: dict,
-                         maxcount: int=5000,
-                         stopwords: List[str] = None,
-                         use_convo_tags: bool = False) -> List[Tuple[Tuple[str, str], str]]:
+def create_data(query_config: Chroma | WikipediaQueryRun,
+                conversations: List[List[str]],
+                max_similarity_score: float,
+                stopwords: List[str] = None,
+                maxcount: int = None) -> List[Tuple[Tuple[str, str], str]]:
     
-    maxcount_str = str(maxcount)
 
     conversation_data = list()
-    count = 0
-    for conversations in json_data.values():
+    for convo in conversations:
+        
+        if maxcount is not None and len(conversation_data) >= maxcount:
+            break
 
-        agent1_data, agent2_data = list(), list()
-        for message_data in conversations["content"]:
+        convo = [text.preprocess(msg) for msg in convo]
 
-            msg_text = text.preprocess_text(message_data["message"])
-            if message_data["agent"] == "agent_1":
-                
-                if isinstance(query_config, Chroma):
-                    doc = query_config.similarity_search(msg_text)[0].page_content
-                else:
-                    doc = query_config.run(msg_text)
-
-                doc = text.preprocess_text(doc, stopwords=stopwords)
-                agent1_data.append((msg_text, doc))
-            else:
-                agent2_data.append(msg_text)
+        input_output_document = list(itertools.batched(convo, n=2))
+        if len(input_output_document[-1]) != 2:
+            input_output_document = input_output_document[ : -1]
+        for input_doc, output_doc in input_output_document:
             
-            count += 1
-            pretty_print('/'.join([str(count), maxcount_str]))
-            # if target message count has been reached, concatenate past convos with current convos and return.
-            if count >= maxcount:
-                return conversation_data + list(zip(agent1_data, agent2_data))
-            
-        convo = list(zip(agent1_data,agent2_data))
-        # Optionally concatenate conversation begin and end tags to current conversation.
-        # If using these, make sure the data is unshuffled or batched accordingly.
-        if use_convo_tags:
+            if isinstance(query_config, Chroma):
+                md_doc, score = query_config.similarity_search_with_score(input_doc, k=1)[0]
 
-            convo[0] = (("<BCONVO> " + convo[0][0][0],convo[0][0][1]), convo[0][1])
-            convo[-1] = (convo[-1][0], convo[-1][1] + " <ECONVO>")
+                md_doc = text.preprocess(md_doc) if score < max_similarity_score else "<NOMD>"
+            else:     
+                md_doc = text.preprocess(query_config.run(input_doc), stopwords=stopwords)
 
-        conversation_data += convo
+            conversation_data.append(((input_doc, md_doc), output_doc)) 
+
     return conversation_data
+
 
 def collate(data_batch):
 
@@ -94,9 +82,9 @@ def collate(data_batch):
 parser = argparse.ArgumentParser(
     prog="Create Tensors",
     description="""
-    This program queries a Chroma  pytorch dataloaders. It accepts the following arguments:
+    This program queries a Chroma instance (or WikipediaQueryAPI) to build pytorch dataloaders. It accepts the following arguments:
 
-        --count (-c) INT The max number of messages to process. (Default 10000)
+        --count (-c) INT The max number of messages to process, or None to process all data. (Default None)
         --batch-size (-b) INT The (unsigned integer) size of each batch for dataloader. (Default 128)
         
         --shuffle (-s) Whether or not to shuffle the dataloaders. (Default False)
@@ -107,11 +95,13 @@ parser = argparse.ArgumentParser(
 
         --reverse-encoder-inputs Whether or not to reverse input documents. (Default False)
 
-        --dataset-split-ratio FLOAT A floating point
+        --dataset-split-ratio FLOAT How much of the dataset should be reserved for training (between 0.1 and 1)
+
+        --max-similarity-score FLOAT The maximum similarity score for retrieved documents to be considered (values about max_similarity_score will not be considered)
     """,
     epilog="For more information, see the article on PyTorch DataLoaders")
-parser.add_argument("-c", "--count", type=int, default=10000)
-parser.add_argument("-b", "--batch-size", type=int, default=128)
+parser.add_argument("-c", "--count", type=int, default=None)
+parser.add_argument("-b", "--batch-size", type=int, default=64)
 parser.add_argument("-s", "--shuffle", default=False,action="store_true")
 parser.add_argument("-d", "--drop-last-batch", default=False, action="store_true")
 parser.add_argument("-r", "--remove-stopwords", default=False, action="store_true")
@@ -119,6 +109,8 @@ parser.add_argument("-w", "--use-wikipedia-api", default=False, action="store_tr
 parser.add_argument("--reverse-encoder-inputs", default=False, action="store_true")
 
 parser.add_argument("--dataset-split-ratio", type=float, default=0.8)
+
+parser.add_argument("--max-similarity-score", type=float, default=1.23)
 # Query chroma using langchain for similar input documents, 
 # convert text to tensors and save
 
@@ -132,6 +124,8 @@ if __name__ == "__main__":
 
     USE_WIKIPEDIA = args.use_wikipedia_api
     REMOVE_STOPWORDS = args.remove_stopwords
+
+    MAX_SIMILARITY_SCORE = args.max_similarity_score
 
     REVERSE_ENCODER_INPUTS = args.reverse_encoder_inputs
 
@@ -179,9 +173,10 @@ if __name__ == "__main__":
 
     # All data is a list containing tuples of the form:
     # ((input_msg, input_doc), output_msg)
-    all_data = get_topicalchat_data(
-        query_config, json_data=json_object, 
-        maxcount=MAX_DATA, stopwords=stopwords) 
+    all_data = create_data(
+        query_config, conversations=json_object,  
+        max_similarity_score=MAX_SIMILARITY_SCORE,
+        stopwords=stopwords, maxcount=MAX_DATA) 
     
     vocab_data = list()
     for (in_msg, in_doc), out_msg in all_data:
@@ -190,12 +185,16 @@ if __name__ == "__main__":
         vocab_data.append(out_msg)
 
     # Build and save current vocab for model lookups
-    en_vocab = TextTensorBuilder.build_vocab(
+    tensor_builder = TextTensorBuilder(
         corpus=vocab_data, specials=constants.SPECIAL_TOKENS, 
+        default_index=constants.SPECIAL_TOKENS.index("<UNK>"),
+        min_freq=5,
         save_filepath="en_vocab.pickle")
     
-    BOS_IDX, EOS_IDX, PAD_IDX, BMD_IDX, EMD_IDX = tuple(en_vocab.lookup_indices(
-        ["<BOS>", "<EOS>", "<PAD>", "<EMD>", "<BMD>"] ))
+    BOS_IDX, EOS_IDX, PAD_IDX, BMD_IDX, EMD_IDX = tuple(
+        tensor_builder.lang_vocab.lookup_indices([
+            "<BOS>", "<EOS>", "<PAD>", "<BMD>", "<EMD>"
+        ] ))
 
     # Tensorize docs before creating a DataLoader instance
     tensor_data = list()
@@ -203,26 +202,32 @@ if __name__ == "__main__":
 
         in_msg_tensor = torch.cat([
             torch.tensor([BOS_IDX], dtype=torch.long),
-            TextTensorBuilder.text_to_tensor(en_vocab, agent1_msg, REVERSE_ENCODER_INPUTS),
+            tensor_builder.text_to_tensor(agent1_msg, REVERSE_ENCODER_INPUTS),
             torch.tensor([EOS_IDX], dtype=torch.long)
         ], dim=-1)
         in_doc_tensor = torch.cat([
             torch.tensor([BMD_IDX], dtype=torch.long),
-            TextTensorBuilder.text_to_tensor(en_vocab, agent1_doc, REVERSE_ENCODER_INPUTS),
+            tensor_builder.text_to_tensor(agent1_doc, REVERSE_ENCODER_INPUTS),
             torch.tensor([EMD_IDX], dtype=torch.long)
         ], dim=-1)
 
-        input_seq = torch.cat([in_msg_tensor, in_doc_tensor], dim=-1)
+        if REVERSE_ENCODER_INPUTS:
+            input_seq = torch.cat([in_doc_tensor, in_msg_tensor], dim=-1)
+        else:
+            input_seq = torch.cat([in_msg_tensor, in_doc_tensor], dim=-1)
 
         output_seq = torch.cat([
             torch.tensor([BOS_IDX], dtype=torch.long),
-            TextTensorBuilder.text_to_tensor(en_vocab, agent2_msg),
+            tensor_builder.text_to_tensor(agent2_msg),
             torch.tensor([EOS_IDX], dtype=torch.long)
         ], dim=-1)
 
         tensor_data.append((input_seq, output_seq))
 
     # Create train/validation splits, save, and exit.
+  #  tensor_data = itertools.batched(tensor_data, 20000)
+ #   for i, batch in enumerate(tensor_data):
+
     train_end_idx = math.floor(len(tensor_data) * DATASET_SPLIT_RATIO) 
 
     train_iter = DataLoader(
@@ -234,9 +239,9 @@ if __name__ == "__main__":
         shuffle = SHUFFLE_DATALOADERS, collate_fn = collate,
         drop_last = DROP_LAST_BATCH)
 
-    torch.save(train_iter, "./model_tensors/train_tensor_{0}_{1}_{2}.pt".format(
+    torch.save(train_iter, "./model_tensors/train_tensor_clean2_{0}_{1}_{2}.pt".format(
         SHUFFLE_DATALOADERS, MODEL_BATCH_SIZE, MAX_DATA))
-    torch.save(valid_iter, "./model_tensors/valid_tensor_{0}_{1}_{2}.pt".format(
+    torch.save(valid_iter, "./model_tensors/valid_tensor_clean2_{0}_{1}_{2}.pt".format(
         SHUFFLE_DATALOADERS, MODEL_BATCH_SIZE, MAX_DATA))
-    
+        
     exit(constants.EXIT_SUCCESS)

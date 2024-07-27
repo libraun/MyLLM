@@ -13,28 +13,33 @@ class Encoder(nn.Module):
                  d_model: int,
                  hidden_dim: int,
                  padding_idx: int,
-                 device: torch.device,
                  num_layers: int=2,
                  dropout: float=0.5):
 
         super(Encoder, self).__init__()
 
-        self.output_layer = nn.GRU(hidden_dim,hidden_dim,
-                                   num_layers=num_layers,
-                                   dropout=dropout,
-                                   device=device)
+        self.msg_gru = nn.GRU(hidden_dim,hidden_dim,
+                              num_layers=num_layers)
+        
+        self.md_gru = nn.GRU(hidden_dim, hidden_dim,
+                             num_layers=num_layers)
 
         self.embeddings = nn.Embedding(d_model, hidden_dim,
-                                       padding_idx=padding_idx,
-                                       device=device)
+                                       padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, msg_tensor, md_tensor):
 
-        x = self.dropout(self.embeddings(x))
-        prediction, hidden = self.output_layer(x)
+        x1 = self.embeddings(msg_tensor)
+        out, hidden1 = self.msg_gru(x1)
 
-        return prediction, hidden
+        x2 = self.dropout(self.embeddings(md_tensor))
+        _, hidden2 = self.md_gru(md_tensor, hidden1)
+
+        # stacked like two grapes in a can  
+        hidden = torch.cat([hidden1, hidden2])
+
+        return out, hidden
 
 class Decoder(nn.Module):
 
@@ -49,51 +54,49 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         self.output_dim = output_dim
-        self.embeddings = nn.Embedding(
-            output_dim, hidden_dim, padding_idx=padding_idx,
-            device=device)
+        self.embeddings = nn.Embedding(output_dim, hidden_dim, 
+                                       padding_idx=padding_idx)
+        self.dropout = nn.Dropout(0.5)
 
         self.rnn = nn.GRU(hidden_dim, hidden_dim,
                           num_layers=num_layers,
-                          dropout=dropout,
-                          device=device)
+                          dropout=dropout)
 
-        self.fc_out = nn.Linear(hidden_dim, output_dim,
-                                device=device)
+        self.fc_out = nn.Linear(hidden_dim, output_dim)
 
         self.device = device
 
-    def forward(self, encoder_outputs, hidden, 
-                target_tensor=None,
+    def forward(self, encoder_outputs, 
+                hidden, target_tensor=None,
                 teacher_forcing_ratio: float=1.0):
 
         length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
 
         batch_size = encoder_outputs.size(1)
-        decoder_input = torch.ones(1, batch_size, dtype=torch.long, device=self.device)
+        decoder_input = torch.zeros(1, batch_size, dtype=torch.long, device=self.device)
         
-        decoder_outputs = []
+        decoder_outputs = torch.zeros(length, batch_size, self.output_dim,
+                                      device=self.device)
 
         for i in range(length):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
-            decoder_outputs.append(decoder_output)
+            decoder_outputs[i] = decoder_output
 
             if target_tensor is not None and random.random() < teacher_forcing_ratio:
                 decoder_input = target_tensor[i].unsqueeze(0)
             else:
                 _, topi = decoder_output.topk(1)
-                decoder_input = topi.squeeze(-1)
-        decoder_outputs = torch.cat(decoder_outputs, dim=0)
+                decoder_input = topi.squeeze(-1).detach()
         return decoder_outputs, hidden
 
     def forward_step(self, input, hidden):
 
-        input = self.embeddings(input)
+        input = self.dropout(self.embeddings(input))
         input = F.relu(input)
 
         output, hidden = self.rnn(input, hidden)
 
-        prediction = self.fc_out(output)
+        prediction = self.fc_out(output.squeeze(0))
         return prediction, hidden
 
 
@@ -107,10 +110,11 @@ def evaluate_model(encoder: Encoder,
     decoder.eval()
     epoch_loss = 0
     with torch.no_grad():
-        for src, trg in valid_iter:
-            src,trg = src.to(device), trg.to(device)
-            prediction, hidden = encoder(src)
-            out, _ = decoder(prediction, hidden, trg)
+        for src, md, trg in valid_iter:
+            src, md, trg = src.to(device), md.to(device), trg.to(device)
+            
+            encoder_out, hidden = encoder(src,md)
+            out, _ = decoder(encoder_out, hidden, trg)
 
             loss = criterion(out.view(-1, out.size(-1)), trg.view(-1))
             epoch_loss += loss.item()
@@ -140,15 +144,16 @@ def train_model(encoder: Encoder,
         decoder.train()
         encoder.train()
 
-        for src, trg in train_iter:
+        for src, md, trg in train_iter:
 
-            src, trg = src.to(device), trg.to(device)
+            src, md, trg = src.to(device), md.to(device), trg.to(device)
+
             encoder_optimizer.zero_grad()
             decoder_optimizer.zero_grad()
 
-            prediction, hidden = encoder(src)
+            encoder_out, hidden = encoder(src, md)
 
-            out, _ = decoder(prediction, hidden, trg)
+            out, _ = decoder(encoder_out, hidden, trg)
 
             loss = criterion(out.view(-1, out.size(-1)), trg.view(-1))
             loss.backward()
@@ -158,6 +163,7 @@ def train_model(encoder: Encoder,
 
             encoder_optimizer.step()
             decoder_optimizer.step()
+
             epoch_loss += loss.item()
         # Add mean loss value as epoch loss.
         epoch_loss = epoch_loss / len(train_iter)

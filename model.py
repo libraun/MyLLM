@@ -18,23 +18,22 @@ class Encoder(nn.Module):
 
         super(Encoder, self).__init__()
 
-        self.msg_gru = nn.GRU(hidden_dim,hidden_dim,
-                              num_layers=num_layers)
-        
-        self.md_gru = nn.GRU(hidden_dim, hidden_dim,
-                             num_layers=num_layers)
+        self.msg_gru = nn.GRU(hidden_dim,hidden_dim)
+        self.md_gru = nn.GRU(hidden_dim, hidden_dim)
 
-        self.embeddings = nn.Embedding(d_model, hidden_dim,
-                                       padding_idx=padding_idx)
+        self.msg_embeddings = nn.Embedding(d_model, hidden_dim,
+                                           padding_idx=padding_idx)
+        self.doc_embeddings = nn.Embedding(d_model, hidden_dim, 
+                                           padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, msg_tensor, md_tensor):
 
-        x1 = self.embeddings(msg_tensor)
+        x1 = self.msg_embeddings(msg_tensor)
         out, hidden1 = self.msg_gru(x1)
 
-        x2 = self.dropout(self.embeddings(md_tensor))
-        _, hidden2 = self.md_gru(md_tensor, hidden1)
+        x2 = self.dropout(self.doc_embeddings(md_tensor))
+        _, hidden2 = self.md_gru(x2, hidden1)
 
         # stacked like two grapes in a can  
         hidden = torch.cat([hidden1, hidden2])

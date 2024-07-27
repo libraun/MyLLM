@@ -13,12 +13,10 @@ class Encoder(nn.Module):
                  d_model: int,
                  hidden_dim: int,
                  padding_idx: int,
-                 num_layers: int=2,
                  dropout: float=0.5):
 
         super(Encoder, self).__init__()
-
-        self.msg_gru = nn.GRU(hidden_dim,hidden_dim)
+        self.msg_gru = nn.RNN(hidden_dim, hidden_dim)
         self.md_gru = nn.GRU(hidden_dim, hidden_dim)
 
         self.msg_embeddings = nn.Embedding(d_model, hidden_dim,
@@ -35,7 +33,7 @@ class Encoder(nn.Module):
         x2 = self.dropout(self.doc_embeddings(md_tensor))
         _, hidden2 = self.md_gru(x2, hidden1)
 
-        # stacked like two grapes in a can  
+        # just like a can of grapes  
         hidden = torch.cat([hidden1, hidden2])
 
         return out, hidden

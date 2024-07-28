@@ -1,4 +1,5 @@
-import random
+import random as r
+import math
 
 import torch
 import torch.nn as nn
@@ -13,11 +14,15 @@ class Encoder(nn.Module):
                  d_model: int,
                  hidden_dim: int,
                  padding_idx: int,
-                 dropout: float=0.5):
+                 dropout: float=0.5,
+                 num_layers: int=2):
 
         super(Encoder, self).__init__()
-        self.msg_gru = nn.RNN(hidden_dim, hidden_dim)
-        self.md_gru = nn.GRU(hidden_dim, hidden_dim)
+
+        self.msg_rnn = nn.RNN(hidden_dim, hidden_dim,
+                              num_layers=num_layers)
+        self.md_gru = nn.GRU(hidden_dim, hidden_dim,
+                             num_layers=num_layers)
 
         self.msg_embeddings = nn.Embedding(d_model, hidden_dim,
                                            padding_idx=padding_idx)
@@ -27,15 +32,16 @@ class Encoder(nn.Module):
 
     def forward(self, msg_tensor, md_tensor):
 
-        x1 = self.msg_embeddings(msg_tensor)
-        out, hidden1 = self.msg_gru(x1)
+        # Pass apply dropout to document embeddings and pass to gru w/o state
+        x1 = self.dropout(self.doc_embeddings(md_tensor))
+        _, hidden1 = self.md_gru(x1)
 
-        x2 = self.dropout(self.doc_embeddings(md_tensor))
-        _, hidden2 = self.md_gru(x2, hidden1)
+        # Pass message embeddings, and hidden state from md_gru, to msg_rnn
+        x2 = self.msg_embeddings(msg_tensor)
+        out, hidden2 = self.msg_rnn(x2, hidden1)
 
-        # just like a can of grapes  
-        hidden = torch.cat([hidden1, hidden2])
-
+        # Take use angle b/w y (hidden2) and x (hidden1)
+        hidden = torch.atan2(hidden2, hidden1)
         return out, hidden
 
 class Decoder(nn.Module):
@@ -63,14 +69,18 @@ class Decoder(nn.Module):
 
         self.device = device
 
+    # Teacher-forcing value of 1.0 = always use trg as input; 0.0 = never do that thing
     def forward(self, encoder_outputs, 
                 hidden, target_tensor=None,
                 teacher_forcing_ratio: float=1.0):
 
-        length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None else len(target_tensor)
+        length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None \
+            else target_tensor.size(-2)
 
         batch_size = encoder_outputs.size(1)
-        decoder_input = torch.zeros(1, batch_size, dtype=torch.long, device=self.device)
+        decoder_input = torch.zeros(1, batch_size, 
+                                    dtype=torch.long, 
+                                    device=self.device)
         
         decoder_outputs = torch.zeros(length, batch_size, self.output_dim,
                                       device=self.device)
@@ -78,8 +88,9 @@ class Decoder(nn.Module):
         for i in range(length):
             decoder_output, hidden = self.forward_step(decoder_input, hidden)
             decoder_outputs[i] = decoder_output
-
-            if target_tensor is not None and random.random() < teacher_forcing_ratio:
+            
+            # Use next value of target tensor if teacher_forcing and trg given
+            if target_tensor is not None and r.random() > teacher_forcing_ratio:
                 decoder_input = target_tensor[i].unsqueeze(0)
             else:
                 _, topi = decoder_output.topk(1)
@@ -93,14 +104,14 @@ class Decoder(nn.Module):
 
         output, hidden = self.rnn(input, hidden)
 
-        prediction = self.fc_out(output.squeeze(0))
+        prediction = self.fc_out(output)
         return prediction, hidden
 
 
 def evaluate_model(encoder: Encoder, 
                    decoder: Decoder, 
                    valid_iter, 
-                   criterion,
+                   criterion: optim.Optimizer,
                    device: torch.device):
 
     encoder.eval()
@@ -110,7 +121,7 @@ def evaluate_model(encoder: Encoder,
         for src, md, trg in valid_iter:
             src, md, trg = src.to(device), md.to(device), trg.to(device)
             
-            encoder_out, hidden = encoder(src,md)
+            encoder_out, hidden = encoder(src, md)
             out, _ = decoder(encoder_out, hidden, trg)
 
             loss = criterion(out.view(-1, out.size(-1)), trg.view(-1))
@@ -120,9 +131,10 @@ def evaluate_model(encoder: Encoder,
 
 def train_model(encoder: Encoder,
                 decoder: Decoder,
-                train_iter, 
-                valid_iter, 
-                criterion,
+                encoder_optimizer: optim.Optimizer,
+                decoder_optimizer: optim.Optimizer,
+                train_iter, valid_iter, 
+                criterion: optim.Optimizer,
                 num_epochs: int,
                 encoder_save_path: str,
                 decoder_save_path: str,
@@ -131,9 +143,6 @@ def train_model(encoder: Encoder,
 
     train_loss_values = []
     validation_loss_values = []
-
-    encoder_optimizer = optim.Adam(encoder.parameters())
-    decoder_optimizer = optim.Adam(decoder.parameters())
 
     for i in range(num_epochs):
         epoch_loss = 0
@@ -161,7 +170,10 @@ def train_model(encoder: Encoder,
             encoder_optimizer.step()
             decoder_optimizer.step()
 
-            epoch_loss += loss.item()
+            current_loss = loss.item()
+
+            epoch_loss += current_loss
+            print(current_loss)
         # Add mean loss value as epoch loss.
         epoch_loss = epoch_loss / len(train_iter)
         val_loss = evaluate_model(encoder, decoder, valid_iter, criterion)

@@ -5,12 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from constants import *
-
-from torch.nn.utils.rnn import pad_sequence
-
 import model
-
 from constants import *
 from create_tensors import collate
 
@@ -21,38 +16,34 @@ def load_tensor(path: str):
 
 if __name__ == "__main__":
 
-    train_iter = load_tensor("./model_tensors/train_tensor.pt")
-    valid_iter = load_tensor("./model_tensors/valid_tensor.pt")
+    train_iter = load_tensor("./train_ugh_sm.pt")
+    valid_iter = load_tensor("./valid_ugh.pt")
 
-    with open("vocab.pickle", "rb") as f:
+    with open("all_vocab_sm.pickle", "rb") as f:
         en_vocab = pickle.load(f)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    BOS_IDX = en_vocab["<BOS_IDX>"]
-    EOS_IDX = en_vocab["<EOS_IDX>"]
-    PAD_IDX = en_vocab["<PAD_IDX>"]
-
-    BMD_IDX = en_vocab["<BEGIN_MD_IDX>"]
-    EMD_IDX = en_vocab["<END_MD_IDX>"]
+    PAD_IDX = en_vocab["<PAD>"]
 
     num_classes = len(en_vocab)
 
     encoder = model.Encoder(num_classes, HIDDEN_DIM, 
-                            padding_idx=PAD_IDX, 
-                            device=device).to(device=device)
+                            padding_idx=PAD_IDX).to(device=device)
     decoder = model.Decoder(num_classes, HIDDEN_DIM, 
                             padding_idx=PAD_IDX, 
                             device=device).to(device=device)
 
-    device = torch.device("gpu" if torch.cuda.is_available() else "cpu")
+    encoder_optimizer = optim.Adam(encoder.parameters())
+    decoder_optimizer = optim.Adam(decoder.parameters())
+    
+    criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX).to(device)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=1)
-
-    model.train_model(encoder, decoder, 
-                      PAD_IDX, 
+    model.train_model(encoder, decoder,
+                      encoder_optimizer, 
+                      decoder_optimizer,
                       train_iter, valid_iter, 
                       criterion, NUM_EPOCHS, 
-                      encoder_save_path="encoder.pt",
-                      decoder_save_path="decoder.pt",
+                      encoder_save_path="encoder_test.pt",
+                      decoder_save_path="decoder_test.pt",
                       device=device)

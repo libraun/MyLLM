@@ -21,9 +21,10 @@ class TextTensorBuilder:
     @classmethod
     def text_to_tensor(cls, lang_vocab,
                        doc: str | List[str], 
-                       max_tokens: int = None,
+                       max_tokens: int=None,
                        reverse_tokens: bool=False,
-                       tokenize: bool=True) -> torch.Tensor: 
+                       tokenize: bool=True,
+                       remove_unknown_tokens: bool=True) -> torch.Tensor: 
         
         tokens = doc if not tokenize else cls.tokenizer(doc)
         
@@ -35,6 +36,10 @@ class TextTensorBuilder:
             tokens.reverse()
         
         text_tensor = [lang_vocab[token] for token in tokens]
+        if remove_unknown_tokens:
+            default_idx = lang_vocab.get_default_index()
+            tokens = [i for i in text_tensor if i != default_idx]
+
         text_tensor = torch.tensor(text_tensor, dtype=torch.long)
 
         return text_tensor

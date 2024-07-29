@@ -18,7 +18,7 @@ from typing import List, Tuple
 
 import text_utils as text
 from text_tensor_builder import TextTensorBuilder
-import constants
+import constants as const
 
 # NOTE: maxcount can be any value greater than 0 (does not need to be less than number of messages in dataset)
 def create_data(query_config: Chroma | WikipediaQueryRun,
@@ -74,11 +74,13 @@ parser = argparse.ArgumentParser(
     description="This program queries a Chroma instance (or WikipediaQueryAPI) to build pytorch dataloaders.",
     usage="""
         The following arguments are accepted.   
-        --input-path (-i)         REQUIRED STR    The filepath to the (.json) training source.
-        --train-output-path       REQUIRED STR    The filepath to save train DataLoader to (recommended to have a '.pt' extension)
-        --valid-output-path       STR             The filepath to save valid DataLoader to (recommended to have a '.pt' extension)
+        --input-dataset- path (-i)         REQUIRED STR    The filepath to the (.json) training source.
+        --input-vocab-path (-v)         STR             Path to an existing torchtext.vocab object to use during DataLoader creation.
 
-        --vocab-path (-v)         STR             Path to an existing torchtext.vocab object to use during DataLoader creation.
+        --output-train-path         REQUIRED STR    The filepath to save train DataLoader to (recommended to have a '.pt' extension)
+        --output-valid-path         STR             The filepath to save valid DataLoader to (recommended to have a '.pt' extension)
+
+        --output-vocab-path (-v)  STR             Path to store the created vocabulary (do not use in conjunction with "--input-vocab-path")
     
         --count (-c)              REQUIRED INT    The max number of messages to process.
         --batch-size (-b)         REQUIRED INT    The (unsigned integer) size of each batch for dataloader. (Default 64)
@@ -100,16 +102,16 @@ parser = argparse.ArgumentParser(
     """,
     epilog="For more information, see the article on PyTorch DataLoaders")
 
-parser.add_argument("-i", "--input-path", type=str, required=True,
+parser.add_argument("-i", "--input-dataset-path", type=str, required=True,
                     help="The path to a (existing) .json dataset.")
+parser.add_argument("-v", "--input-vocab-path", type=str, default=None, required=False, 
+                    help="Supply the path to a preexisting vocab object to use it during training creation.")
 
-parser.add_argument("--train-output-path", type=str, required=True, 
+parser.add_argument("--output-train-path", type=str, default="train.pt", required=False, 
                     help="The path (including filename) to store train dataloader.")
-parser.add_argument("--valid-output-path", type=str, required=False, 
+parser.add_argument("--output-valid-path", type=str, default="valid.pt", required=False, 
                     help="The path (including filename) to store train dataloader.")
-
-
-parser.add_argument("-v", "--vocab-path", type=str, default=None, required=False, 
+parser.add_argument("--output-vocab-path", type=str, default="en_vocab.sm", required=False, 
                     help="Supply the path to a preexisting vocab object to use it during training creation.")
 
 parser.add_argument("-c", "--count", type=int, required=True,
@@ -126,11 +128,9 @@ parser.add_argument("-r", "--reverse-encoder-inputs", default=False, action="sto
 
 parser.add_argument("--clean-stopwords", default=False, action="store_true", required=False)
 parser.add_argument("--no-lemmatize", default=True, action="store_false", required=False)
-
 parser.add_argument("--use-wikipedia-api", default=False, action="store_true", required=False)
 
 parser.add_argument("--dataset-split-ratio", type=float, default=0.8, required=False)
-
 parser.add_argument("--max-similarity-score", type=float, default=1.23, required=False)
 
 # Query chroma using langchain for similar input documents, 
@@ -141,48 +141,44 @@ if __name__ == "__main__":
     try:
         args = parser.parse_args()
     except:
-        exit(constants.EXIT_FAILURE)
+        exit(const.EXIT_FAILURE)
         
-    INPUT_PATH = args.input_path
-    
-    TRAIN_OUTPUT_PATH = args.train_output_path
-    VALID_OUTPUT_PATH = args.valid_output_path
-    
-    VOCAB_PATH = args.vocab_path
+    INPUT_DATASET_PATH: str = args.input_dataset_path
+    INPUT_VOCAB_PATH: str = args.input_vocab_path
 
-    MAX_DATA = args.count
-    MODEL_BATCH_SIZE = args.batch_size
-    SHUFFLE_DATALOADERS = args.shuffle
-    DROP_LAST_BATCH = args.drop_last_batch
+    OUTPUT_TRAIN_PATH: str = args.train_output_path
+    OUTPUT_VALID_PATH: str = args.valid_output_path
+    OUTPUT_VOCAB_PATH: str = args.output_vocab_path
 
-    USE_WIKIPEDIA = args.use_wikipedia_api
-    CLEAN_STOPWORDS = args.clean_stopwords
+    MAX_DATA: int = args.count
+    MODEL_BATCH_SIZE: int = args.batch_size
+    SHUFFLE_DATALOADERS: bool = args.shuffle
+    DROP_LAST_BATCH: bool = args.drop_last_batch
 
-    MAX_SIMILARITY_SCORE = args.max_similarity_score
+    USE_WIKIPEDIA: bool = args.use_wikipedia_api
+    CLEAN_STOPWORDS: bool = args.clean_stopwords
 
-    REVERSE_ENCODER_INPUTS = args.reverse_encoder_inputs
+    MAX_SIMILARITY_SCORE: float = args.max_similarity_score
+    DATASET_SPLIT_RATIO: float = args.dataset_split_ratio
 
-    DATASET_SPLIT_RATIO = args.dataset_split_ratio
-
-    assert len(INPUT_PATH) > 0 and len(TRAIN_OUTPUT_PATH) > 0, \
-        "Please provide valid input and A patoutput paths."
+    REVERSE_ENCODER_INPUTS: bool = args.reverse_encoder_inputs
 
     assert DATASET_SPLIT_RATIO >= 0.1 and DATASET_SPLIT_RATIO <= 1.0, \
         "For dataset_split_ratio, provide a floating point number greater than 0.1 and <= 1.0"
     
-    query_config = None
+    query_config: Chroma | WikipediaQueryRun = None
     # Check if the given (chroma) database path exists and load if so
-    if os.path.isdir(constants.DEFAULT_DB_PATH):
+    if os.path.isdir(const.DEFAULT_DB_PATH):
         
         embedding_function = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2")
 
-        client = chromadb.PersistentClient(path=constants.DEFAULT_DB_PATH)
-        collection = client.get_collection(constants.DEFAULT_DB_NAME)
+        client = chromadb.PersistentClient(path=const.DEFAULT_DB_PATH)
+        collection = client.get_collection(const.DEFAULT_DB_NAME)
 
         query_config = Chroma(
             client=client, 
-            collection_name=constants.DEFAULT_DB_NAME,
+            collection_name=const.DEFAULT_DB_NAME,
             embedding_function=embedding_function
         )
     # Else, use Wikipedia API to query input data (slow due to requests)
@@ -197,15 +193,15 @@ if __name__ == "__main__":
               """)
         query_config = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper(top_k_results=1))
     
-    # Stopwords: A list of (very common) strings to remove from the input metadata document.
+    # Stopwords: A list of (usually common) strings to remove from the input metadata document.
     stopwords = None if not CLEAN_STOPWORDS else text.load_tokens_from_text("stopwords.txt")
 
     # Load Topical-Chat dataset from from json
-    if not os.path.isfile(INPUT_PATH):
+    if not os.path.isfile(INPUT_DATASET_PATH):
         parser.print_usage()
-        exit(constants.EXIT_FAILURE)
+        exit(const.EXIT_FAILURE)
 
-    with open(INPUT_PATH, "r") as f:
+    with open(INPUT_DATASET_PATH, "r") as f:
         json_object = json.load(f)
 
     # All data is a list containing tuples of the form:
@@ -215,42 +211,39 @@ if __name__ == "__main__":
         max_similarity_score=MAX_SIMILARITY_SCORE,
         stopwords=stopwords, maxcount=MAX_DATA) 
     
-    # Flatten all_data to get vocab 
-    all_vocab_data = itertools.chain.from_iterable(all_data)
-    
-
+    # Create language vocab with flattened all_data
     all_vocab = TextTensorBuilder.build_vocab(
-        corpus=all_vocab_data, specials=["<PAD>", "<UNK>", "<BOS>", "<EOS>"], 
+        corpus=itertools.chain.from_iterable(all_data), 
+        specials=const.MSG_SPECIAL_TOKENS, 
         default_index_token="<UNK>", min_freq=5,
         save_filepath="all_vocab_sm.pickle")
 
-    BOS_IDX, EOS_IDX, PAD_IDX = tuple(
-        all_vocab.lookup_indices([
-            "<BOS>", "<EOS>", "<PAD>"
-        ] ))
     # Tensorize docs before creating a DataLoader instance
     tensor_data = list()
     for agent1_msg, agent1_doc, agent2_msg in all_data:
 
+        #
         in_msg_tensor = torch.cat([
-            torch.tensor([BOS_IDX], dtype=torch.long),
+            torch.tensor([const.BOS_IDX], dtype=torch.long),
+
             TextTensorBuilder.text_to_tensor(
                 all_vocab, agent1_msg, 
-                max_tokens=None,
                 reverse_tokens=REVERSE_ENCODER_INPUTS),
-            torch.tensor([EOS_IDX], dtype=torch.long)
-        ], dim=-1)
-        in_md_tensor = torch.cat([
-            TextTensorBuilder.text_to_tensor(
-                all_vocab, agent1_doc, 
-                max_tokens=10, 
-                reverse_tokens=REVERSE_ENCODER_INPUTS),
-        ], dim=-1)
 
+            torch.tensor([const.EOS_IDX], dtype=torch.long)
+        ], dim=-1)
+        
+        # Wikipedia summaries can get especially long, so we filter out extra tokens
+        in_md_tensor = TextTensorBuilder.text_to_tensor(
+            all_vocab, agent1_doc, max_tokens=10, reverse_tokens=REVERSE_ENCODER_INPUTS)
+
+        # Cat BOS and EOS tags to out_msg_tensor
         out_msg_tensor = torch.cat([
-            torch.tensor([BOS_IDX], dtype=torch.long),
+            torch.tensor([const.BOS_IDX], dtype=torch.long),
+
             TextTensorBuilder.text_to_tensor(all_vocab, agent2_msg),
-            torch.tensor([EOS_IDX], dtype=torch.long)
+
+            torch.tensor([const.EOS_IDX], dtype=torch.long)
         ], dim=-1)
 
         tensor_data.append((in_msg_tensor, in_md_tensor, out_msg_tensor))
@@ -270,4 +263,4 @@ if __name__ == "__main__":
     torch.save(train_iter, TRAIN_OUTPUT_PATH)
     torch.save(valid_iter, VALID_OUTPUT_PATH)
         
-    exit(constants.EXIT_SUCCESS)
+    exit(const.EXIT_SUCCESS)

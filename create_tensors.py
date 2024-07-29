@@ -146,8 +146,8 @@ if __name__ == "__main__":
     INPUT_DATASET_PATH: str = args.input_dataset_path
     INPUT_VOCAB_PATH: str = args.input_vocab_path
 
-    OUTPUT_TRAIN_PATH: str = args.train_output_path
-    OUTPUT_VALID_PATH: str = args.valid_output_path
+    OUTPUT_TRAIN_PATH: str = args.output_train_path
+    OUTPUT_VALID_PATH: str = args.output_valid_path
     OUTPUT_VOCAB_PATH: str = args.output_vocab_path
 
     MAX_DATA: int = args.count

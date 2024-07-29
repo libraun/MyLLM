@@ -1,7 +1,7 @@
 import pickle
 
 import torch
-import torchtext
+import torchtext.vocab
 
 torchtext.disable_torchtext_deprecation_warning()
 
@@ -10,60 +10,63 @@ from collections import Counter, OrderedDict
 from torchtext.vocab import vocab
 from torchtext.data.utils import get_tokenizer
 
+# TextTensorProvider provides utilities for building tensors from text,
+# and provides an easy way to create torchtext vocab objects.
 class TextTensorBuilder:
 
-    tokenizer = get_tokenizer("spacy","en_core_web_sm")
-    def __init__(self, corpus,
-                 specials: List[str],
-                 default_index: int = 0,
-                 save_filepath: str=None,
-                 min_freq: int=5,
-                 tokenizer_name: str="spacy", 
-                 tokenizer_version: str="en_core_web_sm",):
-        
-        self.tokenizer = get_tokenizer(tokenizer_name,tokenizer_version)
-        self.__build_vocab__(corpus, specials, default_index, save_filepath, min_freq=min_freq)
+    tokenizer = get_tokenizer("spacy", "en_core_web_sm")
 
-    def text_to_tensor(self, doc: str | List[str], 
-                       tokenize: bool=True,
+    # Accepts a torchtext vocabulary object for token lookups, and a string 
+    # to be parsed to tensor (using vocab)
+    @classmethod
+    def text_to_tensor(cls, lang_vocab,
+                       doc: str | List[str], 
+                       max_tokens: int = None,
                        reverse_tokens: bool=False,
-                       remove_idx: int = 0 ) -> torch.Tensor: 
+                       tokenize: bool=True) -> torch.Tensor: 
         
-        tokens = doc if not tokenize else self.tokenizer(doc)
+        tokens = doc if not tokenize else cls.tokenizer(doc)
+        
+        if max_tokens is not None:
+            tokens = tokens[ : max_tokens]
 
         # Optionally reverse input sequence (trusting the paper)
         if reverse_tokens:
             tokens.reverse()
         
-        text_tensor = [self.lang_vocab[token] for token in tokens if self.lang_vocab[token] != remove_idx]
+        text_tensor = [lang_vocab[token] for token in tokens]
         text_tensor = torch.tensor(text_tensor, dtype=torch.long)
 
         return text_tensor
     
-    def __build_vocab__(self, corpus: List[str], 
-                        specials: List[str],
-                        default_index: int = 0, 
-                        save_filepath: str=None, 
-                        min_freq: int=5):
-        counter = Counter()
-        for text in corpus:
-            tokens = self.tokenizer(text)
-            counter.update(tokens)
+    @classmethod
+    def build_vocab(cls, corpus: List[str], 
+                    specials: List[str],
+                    default_index_token: str ="<UNK>", 
+                    save_filepath: str=None, 
+                    min_freq: int=5):
+        
+        # Apply tokenizer to each entry in corpus
+        tokenized_entries = iter(map(cls.tokenizer, corpus))
 
+        counter = Counter(tokenized_entries)
         sorted_by_freq_tuples = sorted(counter.items(), key=lambda x: x[1], reverse=True)
         
         ordered_dict = OrderedDict(sorted_by_freq_tuples)    
-        result = vocab(ordered_dict, min_freq=min_freq, specials=specials)
+        vocab_object = vocab(ordered_dict, min_freq=min_freq, specials=specials)
 
-        result.set_default_index(default_index)
+        default_idx = vocab_object[default_index_token]
 
-        self.lang_vocab = result
+        # Sets the default index for lookups
+        vocab_object.set_default_index(default_idx)
 
         if save_filepath is not None:
-            self.__save_vocab__(save_filepath)
-    
+            cls.save_vocab(vocab_object, save_filepath)
 
-    def __save_vocab__(self, filename: str):
+        return vocab_object
+    
+    @classmethod
+    def save_vocab(cls, lang_vocab, filename: str):
 
         with open(filename, "wb+") as f:
-            pickle.dump(self.lang_vocab, f)
+            pickle.dump(lang_vocab, f)

@@ -44,13 +44,16 @@ def create_data(query_config: Chroma | WikipediaQueryRun,
         for input_doc, output_doc in input_output_document:
             
             if isinstance(query_config, Chroma):
-                md_doc, score = query_config.similarity_search_with_score(input_doc, k=1)[0]
 
-                md_doc = text.preprocess(md_doc.page_content) if score < max_similarity_score else ""
+                md_doc, score = query_config.similarity_search_with_score(input_doc, k=1)
+
+                md_doc = text.preprocess(md_doc[0].page_content, stopwords=stopwords) \
+                    if score < max_similarity_score else ""
+                
             else:     
                 md_doc = text.preprocess(query_config.run(input_doc), stopwords=stopwords)
 
-            conversation_data.append(((input_doc, md_doc), output_doc)) 
+            conversation_data.append((input_doc, md_doc, output_doc)) 
 
     return conversation_data
 
@@ -59,9 +62,9 @@ def collate(data_batch):
 
     in_batch, md_batch, out_batch = zip(*data_batch)
     
-    in_batch = pad_sequence(in_batch, padding_value=PAD_IDX)
-    md_batch = pad_sequence(md_batch, padding_value=PAD_IDX)
-    out_batch = pad_sequence(out_batch, padding_value=PAD_IDX)
+    in_batch = pad_sequence(in_batch, padding_value=0)
+    md_batch = pad_sequence(md_batch, padding_value=0)
+    out_batch = pad_sequence(out_batch, padding_value=0)
     
     return in_batch,md_batch, out_batch
 
@@ -211,57 +214,37 @@ if __name__ == "__main__":
         query_config, conversations=json_object,  
         max_similarity_score=MAX_SIMILARITY_SCORE,
         stopwords=stopwords, maxcount=MAX_DATA) 
-    in_vocab_data, md_vocab_data, out_vocab_data = list(), list(), list()
-    all_vocab_data = list()
-    for (in_msg, in_doc), out_msg in all_data:
-        in_vocab_data.append(in_msg)
-        md_vocab_data.append(in_doc)
-        out_vocab_data.append(out_msg)
+    
+    # Flatten all_data to get vocab 
+    all_vocab_data = itertools.chain.from_iterable(all_data)
+    
 
-        all_vocab_data.append(in_msg)
-        all_vocab_data.append(in_doc)
-        all_vocab_data.append(out_msg)
-
-    in_vocab = TextTensorBuilder.build_vocab(
-        corpus=in_vocab_data, specials=["<PAD>", "<UNK>", "<BOS>", "<EOS>"], 
-        default_index=1, min_freq=5,
-        save_filepath="in_vocab.pickle")
-    md_vocab = TextTensorBuilder.build_vocab(
-        corpus=md_vocab_data, specials=["<PAD>", "<UNK>", "<BMD>", "<EMD>"], 
-        default_index=1, min_freq=5,
-        save_filepath="md_vocab.pickle")
-    out_vocab = TextTensorBuilder.build_vocab(
-        corpus=out_vocab_data, specials=["<PAD>", "<UNK>", "<BOS>", "<EOS>"], 
-        default_index=1, min_freq=5,
-        save_filepath="out_vocab.pickle")
     all_vocab = TextTensorBuilder.build_vocab(
-        corpus=all_vocab_data, specials=["<PAD>", "<UNK>", "<BOS>", "<EOS>", "<BMD>", "<EMD>"], 
-        default_index=1, min_freq=5,
-        save_filepath="all_vocab.pickle")
+        corpus=all_vocab_data, specials=["<PAD>", "<UNK>", "<BOS>", "<EOS>"], 
+        default_index_token="<UNK>", min_freq=5,
+        save_filepath="all_vocab_sm.pickle")
 
     BOS_IDX, EOS_IDX, PAD_IDX = tuple(
         all_vocab.lookup_indices([
             "<BOS>", "<EOS>", "<PAD>"
         ] ))
-    BMD_IDX, EMD_IDX = tuple(
-        all_vocab.lookup_indices([
-            "<BMD>", "<EMD>"
-        ])
-    )
-
     # Tensorize docs before creating a DataLoader instance
     tensor_data = list()
-    for (agent1_msg, agent1_doc), agent2_msg in all_data:
+    for agent1_msg, agent1_doc, agent2_msg in all_data:
 
         in_msg_tensor = torch.cat([
             torch.tensor([BOS_IDX], dtype=torch.long),
-            TextTensorBuilder.text_to_tensor(all_vocab, agent1_msg, REVERSE_ENCODER_INPUTS),
+            TextTensorBuilder.text_to_tensor(
+                all_vocab, agent1_msg, 
+                max_tokens=None,
+                reverse_tokens=REVERSE_ENCODER_INPUTS),
             torch.tensor([EOS_IDX], dtype=torch.long)
         ], dim=-1)
         in_md_tensor = torch.cat([
-            torch.tensor([BMD_IDX], dtype=torch.long),
-            TextTensorBuilder.text_to_tensor(all_vocab, agent1_doc, REVERSE_ENCODER_INPUTS),
-            torch.tensor([EMD_IDX], dtype=torch.long)
+            TextTensorBuilder.text_to_tensor(
+                all_vocab, agent1_doc, 
+                max_tokens=10, 
+                reverse_tokens=REVERSE_ENCODER_INPUTS),
         ], dim=-1)
 
         out_msg_tensor = torch.cat([

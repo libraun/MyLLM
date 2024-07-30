@@ -21,7 +21,7 @@ class Encoder(nn.Module):
 
         self.msg_rnn = nn.RNN(hidden_dim, hidden_dim,
                               num_layers=num_layers)
-        self.md_gru = nn.GRU(hidden_dim, hidden_dim,
+        self.md_gru = nn.RNN(hidden_dim, hidden_dim,
                              num_layers=num_layers)
 
         self.msg_embeddings = nn.Embedding(d_model, hidden_dim,
@@ -38,10 +38,10 @@ class Encoder(nn.Module):
 
         # Pass message embeddings, and hidden state from md_gru, to msg_rnn
         x2 = self.msg_embeddings(msg_tensor)
-        out, hidden2 = self.msg_rnn(x2, hidden1)
+        out, hidden2 = self.msg_rnn(x2)
 
         # Take use angle b/w y (hidden2) and x (hidden1)
-        hidden = torch.atan2(hidden2, hidden1)
+        hidden = torch.addcmul(hidden2, hidden1, hidden2, value=0.5)
         return out, hidden
 
 class Decoder(nn.Module):
@@ -62,8 +62,8 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(0.5)
 
         self.rnn = nn.GRU(hidden_dim, hidden_dim,
-                          num_layers=num_layers,
-                          dropout=dropout)
+                           num_layers=num_layers,
+                           dropout=dropout)
 
         self.fc_out = nn.Linear(hidden_dim, output_dim)
 
@@ -72,7 +72,7 @@ class Decoder(nn.Module):
     # Teacher-forcing value of 1.0 = always use trg as input; 0.0 = never do that thing
     def forward(self, encoder_outputs, 
                 hidden, target_tensor=None,
-                teacher_forcing_ratio: float=1.0):
+                teacher_forcing_ratio: float=0.26):
 
         length = MAX_DECODER_OUTPUT_LENGTH if target_tensor is None \
             else target_tensor.size(-2)
@@ -144,13 +144,15 @@ def train_model(encoder: Encoder,
     train_loss_values = []
     validation_loss_values = []
 
+    print(len(train_iter))
     for i in range(num_epochs):
         epoch_loss = 0
 
         decoder.train()
         encoder.train()
+        
 
-        for src, md, trg in train_iter:
+        for j, (src, md, trg) in enumerate(train_iter):
 
             src, md, trg = src.to(device), md.to(device), trg.to(device)
 
@@ -173,7 +175,7 @@ def train_model(encoder: Encoder,
             current_loss = loss.item()
 
             epoch_loss += current_loss
-            print(current_loss)
+            print(current_loss, j)
         # Add mean loss value as epoch loss.
         epoch_loss = epoch_loss / len(train_iter)
         val_loss = evaluate_model(encoder, decoder, valid_iter, criterion)

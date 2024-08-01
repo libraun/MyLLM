@@ -12,13 +12,7 @@ This repository includes the Amazon Topical-Chat dataset, which is intended to b
  * "output_msg" is another agent message (e.g., the target response to the input message)
 
 This repository contains a sample chroma database, which contains a sizeable number of Wikipedia articles that can be queried by similarity to an input document. Though not required, it is highly
-recommended to use a persistent Chroma database instance to store sentence embeddings for retrieval, because otherwise Wikipedia will be queried directly (really, _really_ slowly).
-
-If you want the web page demo for this LLM, then ~~you can find it here!~~ you're just gonna have to wait.
-
-### Why have you done this?
-
-For kicks.
+recommended to use a persistent Chroma database instance to store sentence embeddings for retrieval, because otherwise Wikipedia will be queried directly.
 
 ## Legal Stuff
 

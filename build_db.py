@@ -1,5 +1,3 @@
-import sys
-import os.path
 import re
 import random
 import threading
@@ -7,114 +5,114 @@ import threading
 import chromadb
 import wikipedia
 
-from typing import List
-from wikipedia.exceptions import DisambiguationError, PageError
+from typing import List, Iterable
 
-from constants import *
+from langchain_huggingface import HuggingFaceEmbeddings
 
-import wikipedia_utils
+import text_utils as _text
+
+import itertools
+
+import math
+
+from langchain_chroma import Chroma
 
 CHAR_SUB_EXPR = re.compile("[^\x00-\x7F]+")
 
-def get_data(page_title_list: List[str]) -> None:
+processed_docs = list()
+m_lock = threading.Lock()
 
-    global processed_docs
-    
-    count = 0
-    while count < BATCH_LEN and page_title_list:
-        page_title = page_title_list.pop()
-        # Attempt to obtain the wiki page referenced by "title"
-        try:
-            wiki_page = wikipedia.summary(page_title)      
-        # On page exception, ignore this page and keep going.
-        except (DisambiguationError, PageError) as _:
-            continue
-
-        if len(wiki_page) < 5:
-            continue
-        item = (page_title, wiki_page)
-
-        processed_docs.append(item)
-        count = count + 1     
-
-def run_threads(num_threads: int,
-                num_pages: int, 
-                queries: List[str]) -> None:
+def run_threads(queries: List[str]) -> None:
 
     thread_list: List[threading.Thread] = list()
-    for _ in range(num_threads):
-
-        query_subset = random.sample(queries, k=num_pages)
+    batches = itertools.batched(queries, math.floor(len(queries) / 10))
+    for batch in batches:
         # Set a thread to run "get_data", supplying random_page_titles as arg
         thread = threading.Thread(
-            target=get_data,
-            args=[query_subset]
+            target=_get_data,
+            args=[batch]
         )
         thread_list.append(thread)
-
     for thread in thread_list:
         thread.start()
-
     for thread in thread_list:
         thread.join() 
 
-# Main
+def _get_data(page_title_list: Iterable[str]) -> None:
+
+    global processed_docs
+    global m_lock
+    
+    local_docs = list()
+    for page_title in page_title_list:
+        # Attempt to obtain the wiki page referenced by "title"
+        try:
+            wiki_page = wikipedia.summary(page_title)
+        # On page exception (or if a disambiguation page) ignore this page and keep going.
+        except wikipedia.exceptions.DisambiguationError | wikipedia.exceptions.PageError:
+            continue
+
+        if len(wiki_page) > 5:
+            local_docs.append((page_title, wiki_page))
+        
+    m_lock.acquire()
+    processed_docs += local_docs
+    m_lock.release()
+
+
+def _read_lines(path: str) -> List[str]:
+    with open(path, "r") as f:
+        lines = f.readlines()
+    return lines
+
 if __name__ == "__main__":
 
-    db_name = DEFAULT_DB_NAME         \
-        if len(sys.argv) < 2          \
-        else sys.argv[1] # Name for wiki database
-    db_path = DEFAULT_DB_PATH         \
-        if len(sys.argv) < 3          \
-        else sys.argv[2] # Path to store persistent db
+    # The default names for the database
+    db_name: str = "chatbot"
+    db_path: str = "chroma_data"
 
-    num_threads = DEFAULT_NUM_THREADS \
-        if len(sys.argv) < 4          \
-        else int(sys.argv[3])
-    num_pages = DEFAULT_NUM_PAGES     \
-        if len(sys.argv) < 5          \
-        else int(sys.argv[4])
+    # Load a list of words to be excluded from input documents from a 
+    # (newline-separated) .txt file. 
+    stopwords: List[str] = _read_lines("stopwords.txt")
+    topics: List[str] = _read_lines("topics.txt")
 
+    # Set default language for searches to english
     wikipedia.set_lang("en")
 
+    embedding_function = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2")
+
     client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(db_name)
+    collection = Chroma(
+        client=client, 
+        collection_name=db_name,
+        embedding_function=embedding_function
+    )
 
-    # Load list of topics to query on wikipedia
-    topic_list = wikipedia_utils.load_topics_from_text("topic_list.txt")
+    topic_search_results = list()
+    for topic in topics:
+        pages = wikipedia.search(topic, results=20)
+        topic_search_results += [p for p in pages if not re.search("disambiguation",p.lower())]
 
-    topic_search_results = wikipedia_utils.query_wikipedia_topics(topic_list)
-    topic_search_results = [topic for topic in topic_search_results \
-                            if "disambiguation" not in topic.lower()]
-    topic_search_results = wikipedia_utils.filter_topics(collection, topic_search_results)
-
+    # Remove duplicate wiki page titles, then shuffle
+    topic_search_results = list(set(topic_search_results))
     random.shuffle(topic_search_results)
+
     # Retrieve wikipedia pages in rounds
-    for _ in range(ROUNDS):
+    for _ in range(10):
+        try:
+            # Adds wiki page info to global "processed_docs"
+            run_threads(queries=topic_search_results)
 
-        if LOG_PROGRESS:
-            prev_collection_size = collection.count()
+            # Unzip the list of tuples into two (key and val) columns 
+            titles, documents = zip(*processed_docs)
+            
+            documents = [_text.preprocess(d) for d in documents]
+            # Add wiki summaries to chroma collection, using titles as key
+            collection.add_texts(texts=documents, ids=[t for t in titles])
 
-        processed_docs = list()
-        # Adds wiki page info to global "processed_docs"
-        run_threads(num_threads=num_threads, 
-                    num_pages=num_pages, 
-                    queries=topic_search_results)
-
-        # Pull unique titles and docs from processed documents
-        titles = [d[0] for d in processed_docs]
-        documents = [d[1] for d in processed_docs]
-
-        titles, documents = wikipedia_utils.filter_invalid_pages(titles, documents)
-
-        assert len(titles) == len(documents)
-
-        documents = [wikipedia_utils.preprocess_text(doc) for doc in documents]
-
-        collection.add(documents=documents, ids=titles)
-        
-        if LOG_PROGRESS:
-            documents_processed = collection.count() - prev_collection_size
-            print("processed", documents_processed, "documents")
-
-    exit(EXIT_SUCCESS)
+            # Clear the global document storage for the next round
+            processed_docs.clear() 
+        except KeyboardInterrupt:
+            break
+    exit(0)

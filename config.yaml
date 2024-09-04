@@ -1,0 +1,32 @@
+create_tensors:
+
+    input_dataset_path: dataset/merged_data_questions.pickle
+    input_vocab_path: NULL
+
+    chroma_db_path: chroma_data
+    chroma_db_name: chatbot
+
+    stopwords_txt_path: stopwords.txt
+
+    output_train_path: train_new.pt
+    output_valid_path: valid_new.pt
+
+    output_vocab_path: vocab_new.pickle
+
+    target_count: 50000
+    batch_size: 64
+
+    shuffle_data: True
+    drop_last_batch: True
+    
+    reverse_encoder_inputs: True
+
+    clean_stopwords: True
+    lemmatize_tokens: True
+
+    use_wikipedia_api: False
+
+    dataset_split_ratio: 0.8
+    max_similarity_score: 1.05
+
+
